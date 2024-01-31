@@ -1,6 +1,8 @@
 use chrono::{serde::ts_seconds, DateTime, Utc};
 use serde::Serialize;
 use serde_json::Value;
+use std::env;
+use std::process::exit;
 use std::fs;
 use std::path::Path;
 
@@ -12,7 +14,9 @@ struct DirectoryTreeResult {
 }
 
 fn main() {
-    let path = Path::new("/home/yumetodo/it_ims");
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 { exit(1) }
+    let path = Path::new(&args[1]);
     let tree = serde_json::to_string(&create_directory_tree(&path)).unwrap();
     println!("{}", tree);
 }
