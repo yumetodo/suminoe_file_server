@@ -4,6 +4,7 @@ use serde_json::Value;
 use std::env;
 use std::process::exit;
 use std::fs;
+use std::time::Instant;
 use std::path::Path;
 
 #[derive(Serialize)]
@@ -17,8 +18,15 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 { exit(1) }
     let path = Path::new(&args[1]);
-    let tree = serde_json::to_string(&create_directory_tree(&path)).unwrap();
-    println!("{}", tree);
+    let start_time = Instant::now();
+    let tree = create_directory_tree(&path);
+    let scaned_time = Instant::now();
+    let json = serde_json::to_string(&tree).unwrap();
+    let serialized_time =  Instant::now();
+    let scan_dutaion = scaned_time - start_time;
+    let serialize_duration = serialized_time - scaned_time;
+    println!("{}", json);
+    println!("scan: {}.{}\nserialize: {}.{}", scan_dutaion.as_secs(), scan_dutaion.subsec_nanos(), serialize_duration.as_secs(), serialize_duration.subsec_nanos());
 }
 fn create_directory_tree(path: &Path) -> DirectoryTreeResult {
     DirectoryTreeResult {
