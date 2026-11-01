@@ -961,6 +961,30 @@ pub fn read_directory(tree: &Tree, relative_path: &std::path::Path) -> TreeRead 
     }
 }
 
+/// ツリー内のすべてのディレクトリについて、ルートからの相対パス（ルートは空のパス）と
+/// `own_size` を列挙する。パスの昇順（バイト列の順）。未スキャンなら空。
+/// 読み取りロックの中で呼ぶ。検証用の出力（`examples/scan_once` の `--dump-dirs`）が使う。
+pub fn list_own_sizes(tree: &Tree) -> Vec<(std::path::PathBuf, u128)> {
+    let mut result: Vec<(std::path::PathBuf, u128)> = Vec::new();
+    let root = match tree.root() {
+        Some(root) => root,
+        None => return result,
+    };
+    let mut pending: Vec<(std::path::PathBuf, &DirNode)> = vec![(std::path::PathBuf::new(), root)];
+    while let Some((path, node)) = pending.pop() {
+        for (name, child) in node.children() {
+            pending.push((path.join(name), child));
+        }
+        result.push((path, node.own_size()));
+    }
+    result.sort_by(|a, b| {
+        <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::as_bytes(a.0.as_os_str()).cmp(
+            <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::as_bytes(b.0.as_os_str()),
+        )
+    });
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1737,6 +1761,22 @@ mod tests {
             DirectoryLookup::NotFound => panic!("root should be found"),
         }
         assert_eq!(read.status.snapshot, SnapshotState::Incomplete);
+    }
+
+    #[test]
+    fn list_own_sizes_lists_every_directory_in_path_order() {
+        init_logger();
+        let tree = Tree::new();
+        assert!(list_own_sizes(&tree).is_empty());
+        let tree = scanned_tree(NameHasher::new());
+        let expected: Vec<(std::path::PathBuf, u128)> = vec![
+            (std::path::PathBuf::from(""), 1),
+            (std::path::PathBuf::from("a"), 10),
+            (std::path::PathBuf::from("a/b"), 300),
+            (std::path::PathBuf::from("a/c"), 0),
+            (std::path::PathBuf::from("z"), 5),
+        ];
+        assert_eq!(list_own_sizes(&tree), expected);
     }
 
     // ---- ハッシュ衝突中のファイルの削除・サイズ変更（実名で引く） ----

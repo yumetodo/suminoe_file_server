@@ -155,6 +155,20 @@ impl ScanService {
         Ok(tree::read_directory(&guard, relative_path))
     }
 
+    /// すべてのディレクトリについて、ルートからの相対パス（ルートは空のパス）と `own_size` を
+    /// 1 回の読み取りロックの中で列挙する（パスのバイト列の昇順。未スキャンなら空）。
+    /// 検証用の出力（`examples/scan_once` の `--dump-dirs`）が、`find` の結果との突き合わせに使う。
+    ///
+    /// ロックが poisoned の場合は `Err`。
+    pub fn list_own_sizes(&self) -> anyhow::Result<Vec<(std::path::PathBuf, u128)>> {
+        let guard = self
+            .shared
+            .tree
+            .read()
+            .map_err(|_| anyhow::anyhow!("the tree lock is poisoned"))?;
+        Ok(tree::list_own_sizes(&guard))
+    }
+
     /// 直近のフルスキャン（実際に走ったスキャンの種類がフル。格上げされた部分スキャンと、
     /// ルートまで遡った部分スキャンを含む）のレポート。まだなければ `None`。
     pub fn last_full_report(&self) -> Option<std::sync::Arc<report::ScanReport>> {
@@ -872,6 +886,23 @@ mod tests {
 
     fn report_of(completion: &request::Completion) -> &report::ScanReport {
         completion.report.as_ref().unwrap()
+    }
+
+    #[test]
+    fn list_own_sizes_matches_read_directory() {
+        init_logger();
+        let dir = sample_tree();
+        let service = ScanService::start(dir.path().to_path_buf()).unwrap();
+        assert!(service.list_own_sizes().unwrap().is_empty());
+        run_full(&service, dot_excluded());
+        let listed = service.list_own_sizes().unwrap();
+        let expected: Vec<(std::path::PathBuf, u128)> = snapshot(&service)
+            .into_iter()
+            .map(|(path, (own_size, _, _))| (path, own_size))
+            .collect();
+        assert_eq!(listed, expected);
+        assert_eq!(listed.len(), 5);
+        service.shutdown();
     }
 
     #[test]
