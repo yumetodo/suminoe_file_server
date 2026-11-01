@@ -4,8 +4,6 @@
 //! `find` がない環境ではテストは失敗する（飛ばさない）。
 //! `examples/scan_once` は、テスト内で `cargo build --example scan_once` してから実行する。
 
-use std::os::unix::ffi::OsStrExt;
-
 fn init_logger() {
     env_logger::builder().is_test(true).try_init().ok();
 }
@@ -32,6 +30,7 @@ fn make_file(root: &std::path::Path, relative: &str, size: u64) {
 }
 
 fn make_file_os(root: &std::path::Path, relative: &[u8], size: u64) {
+    use std::os::unix::ffi::OsStrExt;
     let path = root.join(std::ffi::OsStr::from_bytes(relative));
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let file = std::fs::File::create(&path).unwrap();
@@ -155,6 +154,7 @@ fn scanner_own_sizes(
     service: &suminoe_file_server::dir_scan::ScanService,
     root: &std::path::Path,
 ) -> DirSizes {
+    use std::os::unix::ffi::OsStrExt;
     let mut result = DirSizes::new();
     for (relative, own_size) in service.list_own_sizes().unwrap() {
         let path = if relative.as_os_str().is_empty() {
@@ -249,6 +249,7 @@ fn assert_matches_find(scanner: &DirSizes, find: &DirSizes) {
 
 #[test]
 fn goal1_full_scan_matches_find_on_the_synthetic_tree() {
+    use std::os::unix::ffi::OsStrExt;
     init_logger();
     let dir = new_temp_dir();
     let _socket = build_synthetic_tree(dir.path());
