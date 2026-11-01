@@ -295,9 +295,14 @@ mod tests {
     #[test]
     fn set_and_get_on_current_thread_round_trip() {
         init_logger();
+
+        // Arrange
+        let priorities = all_priorities();
+
+        // Act & Assert
         // テストスレッドは使い捨てなので、設定を変えても他のテストに影響しない。
-        std::thread::spawn(|| {
-            for priority in all_priorities() {
+        std::thread::spawn(move || {
+            for priority in priorities {
                 let value = priority.to_ioprio_value();
                 ioprio_set_current_thread(value).unwrap();
                 assert_eq!(ioprio_get_current_thread().unwrap(), value, "{priority}");
@@ -310,20 +315,29 @@ mod tests {
     #[test]
     fn invalid_ioprio_is_rejected_with_einval() {
         init_logger();
-        std::thread::spawn(|| {
-            // 存在しないクラス 7 は EINVAL
-            let invalid = 7 << 13;
-            assert_eq!(ioprio_set_current_thread(invalid), Err(libc::EINVAL));
-        })
-        .join()
-        .unwrap();
+
+        // Arrange
+        // 存在しないクラス 7 は EINVAL
+        let invalid = 7 << 13;
+
+        // Act
+        let result = std::thread::spawn(move || ioprio_set_current_thread(invalid))
+            .join()
+            .unwrap();
+
+        // Assert
+        assert_eq!(result, Err(libc::EINVAL));
     }
 
     #[test]
     fn os_thread_id_differs_between_threads() {
         init_logger();
+
+        // Act
         let main_tid = current_os_thread_id();
         let other_tid = std::thread::spawn(current_os_thread_id).join().unwrap();
+
+        // Assert
         assert!(main_tid > 0);
         assert!(other_tid > 0);
         assert_ne!(main_tid, other_tid);
@@ -332,14 +346,21 @@ mod tests {
     #[test]
     fn failure_of_set_is_recorded_in_result_and_errors() {
         init_logger();
+
+        // Arrange
         let errors = crate::dir_scan::report::ErrorRecorder::new();
         let invalid = 7 << 13;
+
+        // Act
         let result = std::thread::scope(|scope| {
             scope
                 .spawn(|| apply_ioprio_value_to_current_thread(3, invalid, &errors))
                 .join()
                 .unwrap()
         });
+        let counts = errors.snapshot();
+
+        // Assert
         assert_eq!(result.worker_index, 3);
         assert_eq!(result.requested, invalid);
         assert!(result.os_thread_id > 0);
@@ -357,7 +378,6 @@ mod tests {
             result.status(),
             crate::dir_scan::report::IoprioStatus::SetFailed
         );
-        let counts = errors.snapshot();
         assert_eq!(counts.total(), 1);
         assert_eq!(
             counts.count(crate::dir_scan::report::ScanErrorKind::IoprioSet),
@@ -369,7 +389,11 @@ mod tests {
     #[test]
     fn success_is_recorded_without_errors() {
         init_logger();
+
+        // Arrange
         let errors = crate::dir_scan::report::ErrorRecorder::new();
+
+        // Act
         let result = std::thread::scope(|scope| {
             scope
                 .spawn(|| {
@@ -382,6 +406,8 @@ mod tests {
                 .join()
                 .unwrap()
         });
+
+        // Assert
         assert_eq!(
             result.status(),
             crate::dir_scan::report::IoprioStatus::Ok,
@@ -412,20 +438,19 @@ mod tests {
     #[test]
     fn record_errors_distinguishes_set_get_and_mismatch() {
         init_logger();
-        let idle = crate::dir_scan::settings::IoPriority::Idle.to_ioprio_value();
-        let best_effort = crate::dir_scan::settings::IoPriority::best_effort(4)
-            .unwrap()
-            .to_ioprio_value();
 
+        // Arrange
         // 設定に失敗した: IoprioSet、errno あり
         let errors = crate::dir_scan::report::ErrorRecorder::new();
-        record_ioprio_errors(
-            &synthetic(
-                crate::dir_scan::report::IoprioSetResult::Failure { errno: libc::EPERM },
-                crate::dir_scan::report::IoprioGetResult::NotAttempted,
-            ),
-            &errors,
+        let set_failed = synthetic(
+            crate::dir_scan::report::IoprioSetResult::Failure { errno: libc::EPERM },
+            crate::dir_scan::report::IoprioGetResult::NotAttempted,
         );
+
+        // Act
+        record_ioprio_errors(&set_failed, &errors);
+
+        // Assert
         let counts = errors.snapshot();
         assert_eq!(counts.total(), 1);
         assert_eq!(
@@ -434,15 +459,18 @@ mod tests {
         );
         assert_eq!(counts.errno_count(libc::EPERM), 1);
 
+        // Arrange
         // 設定は成功したが読み返しに失敗した: IoprioGet、errno あり
         let errors = crate::dir_scan::report::ErrorRecorder::new();
-        record_ioprio_errors(
-            &synthetic(
-                crate::dir_scan::report::IoprioSetResult::Success,
-                crate::dir_scan::report::IoprioGetResult::Failure { errno: libc::ESRCH },
-            ),
-            &errors,
+        let get_failed = synthetic(
+            crate::dir_scan::report::IoprioSetResult::Success,
+            crate::dir_scan::report::IoprioGetResult::Failure { errno: libc::ESRCH },
         );
+
+        // Act
+        record_ioprio_errors(&get_failed, &errors);
+
+        // Assert
         let counts = errors.snapshot();
         assert_eq!(counts.total(), 1);
         assert_eq!(
@@ -451,15 +479,21 @@ mod tests {
         );
         assert_eq!(counts.errno_count(libc::ESRCH), 1);
 
+        // Arrange
         // 読み返した値が要求値と違う: IoprioGet、errno なし
+        let best_effort = crate::dir_scan::settings::IoPriority::best_effort(4)
+            .unwrap()
+            .to_ioprio_value();
         let errors = crate::dir_scan::report::ErrorRecorder::new();
-        record_ioprio_errors(
-            &synthetic(
-                crate::dir_scan::report::IoprioSetResult::Success,
-                crate::dir_scan::report::IoprioGetResult::Value(best_effort),
-            ),
-            &errors,
+        let mismatch = synthetic(
+            crate::dir_scan::report::IoprioSetResult::Success,
+            crate::dir_scan::report::IoprioGetResult::Value(best_effort),
         );
+
+        // Act
+        record_ioprio_errors(&mismatch, &errors);
+
+        // Assert
         let counts = errors.snapshot();
         assert_eq!(counts.total(), 1);
         assert_eq!(
@@ -468,15 +502,18 @@ mod tests {
         );
         assert!(counts.by_errno.is_empty());
 
+        // Arrange
         // 設定は成功したのに読み返しをしていない: IoprioGet、errno なし
         let errors = crate::dir_scan::report::ErrorRecorder::new();
-        record_ioprio_errors(
-            &synthetic(
-                crate::dir_scan::report::IoprioSetResult::Success,
-                crate::dir_scan::report::IoprioGetResult::NotAttempted,
-            ),
-            &errors,
+        let get_not_attempted = synthetic(
+            crate::dir_scan::report::IoprioSetResult::Success,
+            crate::dir_scan::report::IoprioGetResult::NotAttempted,
         );
+
+        // Act
+        record_ioprio_errors(&get_not_attempted, &errors);
+
+        // Assert
         assert_eq!(
             errors
                 .snapshot()
@@ -484,22 +521,31 @@ mod tests {
             1
         );
 
+        // Arrange
         // 一致: 何も記録しない
+        let idle = crate::dir_scan::settings::IoPriority::Idle.to_ioprio_value();
         let errors = crate::dir_scan::report::ErrorRecorder::new();
-        record_ioprio_errors(
-            &synthetic(
-                crate::dir_scan::report::IoprioSetResult::Success,
-                crate::dir_scan::report::IoprioGetResult::Value(idle),
-            ),
-            &errors,
+        let matched = synthetic(
+            crate::dir_scan::report::IoprioSetResult::Success,
+            crate::dir_scan::report::IoprioGetResult::Value(idle),
         );
+
+        // Act
+        record_ioprio_errors(&matched, &errors);
+
+        // Assert
         assert_eq!(errors.snapshot().total(), 0);
     }
 
     #[test]
     fn pool_workers_read_back_requested_priority() {
         init_logger();
-        for priority in all_priorities() {
+
+        // Arrange
+        let priorities = all_priorities();
+
+        // Act & Assert
+        for priority in priorities {
             let errors = std::sync::Arc::new(crate::dir_scan::report::ErrorRecorder::new());
             let pool =
                 build_pool(parallelism(4), priority, std::sync::Arc::clone(&errors)).unwrap();
@@ -527,7 +573,12 @@ mod tests {
     #[test]
     fn pool_records_every_worker_exactly_once() {
         init_logger();
-        for worker_count in [1, 2, 8, 64] {
+
+        // Arrange
+        let worker_counts = [1, 2, 8, 64];
+
+        // Act & Assert
+        for worker_count in worker_counts {
             let errors = std::sync::Arc::new(crate::dir_scan::report::ErrorRecorder::new());
             let pool = build_pool(
                 parallelism(worker_count),
@@ -550,9 +601,13 @@ mod tests {
     #[test]
     fn worker_thread_has_the_requested_priority_and_name() {
         init_logger();
+
+        // Arrange
         let priority = crate::dir_scan::settings::IoPriority::best_effort(6).unwrap();
         let errors = std::sync::Arc::new(crate::dir_scan::report::ErrorRecorder::new());
         let pool = build_pool(parallelism(3), priority, errors).unwrap();
+
+        // Act
         // プール内で実行した処理から見ても、読み返した値が要求値で、スレッド名が付いている
         let observed: Vec<(i32, String)> = pool.pool.broadcast(|_context| {
             (
@@ -560,6 +615,8 @@ mod tests {
                 std::thread::current().name().unwrap().to_string(),
             )
         });
+
+        // Assert
         assert_eq!(observed.len(), 3);
         for (value, name) in &observed {
             assert_eq!(*value, priority.to_ioprio_value());
