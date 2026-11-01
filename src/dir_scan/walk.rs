@@ -186,7 +186,7 @@ pub fn run_walk(
 }
 
 /// `catch_unwind` が捕まえたパニックの内容を文字列にする。
-fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
         (*message).to_string()
     } else if let Some(message) = payload.downcast_ref::<String>() {
