@@ -11,11 +11,13 @@ pub enum ScanErrorKind {
     OpenDirectory,
     /// readdir（getdents）が失敗した
     ReadDirectory,
-    /// ファイルの stat が `ENOENT`（readdir と stat の間に消えた。正常な競合）
+    /// ファイル（種別不明のエントリを含む）の stat が `ENOENT`（readdir と stat の間に消えた。
+    /// 正常な競合）
     StatFileNotFound,
     /// ファイルの stat が `ENOENT` 以外で失敗した
     StatFile,
-    /// 種別が不明（`DT_UNKNOWN`）のエントリの stat が失敗した
+    /// 種別が不明（`DT_UNKNOWN`）のエントリの stat が `ENOENT` 以外で失敗した
+    /// （`ENOENT` は `StatFileNotFound` に数える）
     StatUnknownEntry,
     /// 走査中の変更（ディレクトリが `ENOENT`・`ENOTDIR`・`ELOOP` で開けない）
     ChangedDuringScan,

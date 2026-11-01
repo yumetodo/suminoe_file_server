@@ -426,6 +426,45 @@ fn lookup_entry_class(
     ))))
 }
 
+/// `DT_UNKNOWN` のエントリの stat の結果（`looked_up`）から、そのエントリの種別を決める。
+/// 種別を決められない（`None`）ときは、そのエントリを合計に含めない。
+///
+/// - 成功: その種別。
+/// - `ENOENT`（readdir と stat の間に消えた）: 通常ファイルの stat の `ENOENT` と同じ正常な
+///   競合として、`StatFileNotFound` に数える。ノードのエラーにはしない。
+/// - その他（`EACCES`・`EIO` など）: `StatUnknownEntry` に数え、`node` にエラーを付ける
+///   （エントリが欠けた合計を「完全」と返さないため）。
+fn settle_unknown_entry(
+    context: &WalkContext<'_>,
+    relative_path: &std::path::Path,
+    name: &std::ffi::OsStr,
+    looked_up: Result<EntryClass, i32>,
+    node: &mut crate::dir_scan::tree::DirNode,
+) -> Option<EntryClass> {
+    match looked_up {
+        Ok(class) => Some(class),
+        Err(errno) if errno == libc::ENOENT => {
+            context.errors.record(
+                crate::dir_scan::report::ScanErrorKind::stat_file(errno),
+                Some(errno),
+                &relative_path.join(name),
+                "an entry whose type is unknown vanished before it was stat-ed",
+            );
+            None
+        }
+        Err(errno) => {
+            context.errors.record(
+                crate::dir_scan::report::ScanErrorKind::StatUnknownEntry,
+                Some(errno),
+                &relative_path.join(name),
+                "failed to stat an entry whose type is unknown",
+            );
+            node.record_stat_error(errno);
+            None
+        }
+    }
+}
+
 /// readdir で得た、再帰または stat する対象のエントリ。
 struct PendingEntry {
     ino: u64,
@@ -442,10 +481,13 @@ struct DirListing {
 
 /// ディレクトリを readdir し、数える対象（ファイル・リンク）と再帰する対象（ディレクトリ）に
 /// 分ける。FIFO・ソケット・デバイスと、除外パターンに当たるものは捨てる。
+/// 種別不明のエントリの stat が失敗したときのエラーは `node` に付ける
+/// （[`settle_unknown_entry`]）。
 fn read_entries(
     context: &WalkContext<'_>,
     dir: &mut rustix::fs::Dir,
     relative_path: &std::path::Path,
+    node: &mut crate::dir_scan::tree::DirNode,
 ) -> DirListing {
     let mut listing = DirListing {
         files: Vec::new(),
@@ -487,17 +529,9 @@ fn read_entries(
                 Ok(dir_fd) => lookup_entry_class(dir_fd, name),
                 Err(errno) => Err(errno.raw_os_error()),
             };
-            class = match looked_up {
-                Ok(class) => class,
-                Err(errno) => {
-                    context.errors.record(
-                        crate::dir_scan::report::ScanErrorKind::StatUnknownEntry,
-                        Some(errno),
-                        &relative_path.join(name),
-                        "failed to stat an entry whose type is unknown",
-                    );
-                    continue;
-                }
+            class = match settle_unknown_entry(context, relative_path, name, looked_up, node) {
+                Some(class) => class,
+                None => continue,
             };
         }
         let pending = PendingEntry {
@@ -690,7 +724,7 @@ fn walk_opened(
             return Ok(node);
         }
     };
-    let mut listing = read_entries(context, &mut dir, relative_path);
+    let mut listing = read_entries(context, &mut dir, relative_path, &mut node);
     let files = std::mem::take(&mut listing.files);
     let measured = match dir.fd() {
         Ok(dir_fd) => measure_files(context, dir_fd, relative_path, files, &mut node),
@@ -1664,6 +1698,91 @@ mod tests {
             lookup_entry_class(borrowed, std::ffi::OsStr::new("missing")),
             Err(libc::ENOENT)
         );
+    }
+
+    /// `settle_unknown_entry` に失敗結果を注入して、戻り値・ノードのエラー・エラー件数を返す。
+    fn settle_with(
+        looked_up: Result<EntryClass, i32>,
+    ) -> (
+        Option<EntryClass>,
+        crate::dir_scan::tree::DirNode,
+        crate::dir_scan::report::ErrorCounts,
+    ) {
+        let tree = tempfile::tempdir().unwrap();
+        let root_fd = open_dir(tree.path());
+        let errors = crate::dir_scan::report::ErrorRecorder::new();
+        let hasher = crate::dir_scan::tree::NameHasher::new();
+        let exclude = crate::dir_scan::settings::ExcludePatterns::none();
+        let context = WalkContext {
+            root_fd: rustix::fd::AsFd::as_fd(&root_fd),
+            exclude_patterns: &exclude,
+            name_hasher: &hasher,
+            errors: &errors,
+        };
+        let mut node = crate::dir_scan::tree::DirNode::new(std::ffi::OsString::new(), 1, 2);
+        let class = settle_unknown_entry(
+            &context,
+            std::path::Path::new("dir"),
+            std::ffi::OsStr::new("entry"),
+            looked_up,
+            &mut node,
+        );
+        node.finalize().unwrap();
+        (class, node, errors.snapshot())
+    }
+
+    #[test]
+    fn unknown_entry_that_vanished_is_a_benign_race() {
+        init_logger();
+        let (class, node, counts) = settle_with(Err(libc::ENOENT));
+        assert_eq!(class, None);
+        // ノードにエラーを付けず、スキャンを「エラーあり」にもしない
+        assert!(node.is_complete());
+        assert!(!node.errors().has_error());
+        assert_eq!(counts.total_excluding_races(), 0);
+        // 件数には、ファイルの stat の ENOENT と同じ種類で数える
+        assert_eq!(
+            counts.count(crate::dir_scan::report::ScanErrorKind::StatFileNotFound),
+            1
+        );
+        assert_eq!(
+            counts.count(crate::dir_scan::report::ScanErrorKind::StatUnknownEntry),
+            0
+        );
+    }
+
+    #[test]
+    fn unknown_entry_stat_failure_marks_the_directory_incomplete() {
+        init_logger();
+        for errno in [libc::EACCES, libc::EIO, libc::EOVERFLOW] {
+            let (class, node, counts) = settle_with(Err(errno));
+            assert_eq!(class, None, "errno={errno}");
+            assert!(!node.is_complete(), "errno={errno}");
+            assert!(node.errors().has_error(), "errno={errno}");
+            assert_eq!(node.subtree_error_dir_count(), 1);
+            assert_eq!(
+                counts.count(crate::dir_scan::report::ScanErrorKind::StatUnknownEntry),
+                1
+            );
+            assert_eq!(counts.total_excluding_races(), 1);
+        }
+        let (_, node, _) = settle_with(Err(libc::EACCES));
+        assert_eq!(node.errors().stat_eacces, 1);
+        let (_, node, _) = settle_with(Err(libc::EIO));
+        assert_eq!(node.errors().stat_eio, 1);
+        let (_, node, _) = settle_with(Err(libc::EOVERFLOW));
+        assert_eq!(node.errors().stat_other, 1);
+    }
+
+    #[test]
+    fn unknown_entry_that_was_stat_ed_keeps_its_class() {
+        init_logger();
+        for class in [EntryClass::File, EntryClass::Directory, EntryClass::Skip] {
+            let (settled, node, counts) = settle_with(Ok(class));
+            assert_eq!(settled, Some(class));
+            assert!(node.is_complete());
+            assert_eq!(counts.total(), 0);
+        }
     }
 
     #[test]
