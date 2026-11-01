@@ -1046,56 +1046,97 @@ mod tests {
     #[test]
     fn name_hasher_is_stable_for_the_same_name_and_clone() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let cloned = hasher.clone();
         let name = os("file.txt");
-        assert_eq!(hasher.hash_name(&name), hasher.hash_name(&name));
-        assert_eq!(hasher.hash_name(&name), cloned.hash_name(&name));
-        assert_ne!(hasher.hash_name(&name), hasher.hash_name(&os("file.txr")));
+        let other = os("file.txr");
+
+        // Act
+        let first = hasher.hash_name(&name);
+        let second = hasher.hash_name(&name);
+        let from_clone = cloned.hash_name(&name);
+        let from_other = hasher.hash_name(&other);
+
+        // Assert
+        assert_eq!(first, second);
+        assert_eq!(first, from_clone);
+        assert_ne!(first, from_other);
     }
 
     #[test]
     fn name_hasher_hashes_non_utf8_bytes() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let non_utf8 = <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"a\xffb");
         let other = <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"a\xfeb");
-        assert_eq!(hasher.hash_name(non_utf8), hasher.hash_name(non_utf8));
-        assert_ne!(hasher.hash_name(non_utf8), hasher.hash_name(other));
+
+        // Act
+        let first = hasher.hash_name(non_utf8);
+        let second = hasher.hash_name(non_utf8);
+        let from_other = hasher.hash_name(other);
+
+        // Assert
+        assert_eq!(first, second);
+        assert_ne!(first, from_other);
     }
 
     #[test]
     fn name_hasher_test_mapping_forces_collisions() {
         init_logger();
+
+        // Arrange
         let hasher = colliding_hasher();
-        assert_eq!(hasher.hash_name(&os("ab")), hasher.hash_name(&os("cd")));
-        assert_ne!(hasher.hash_name(&os("ab")), hasher.hash_name(&os("abc")));
+
+        // Act
+        let ab = hasher.hash_name(&os("ab"));
+        let cd = hasher.hash_name(&os("cd"));
+        let abc = hasher.hash_name(&os("abc"));
+
+        // Assert
+        assert_eq!(ab, cd);
+        assert_ne!(ab, abc);
     }
 
     #[test]
     fn file_entry_stays_small() {
         init_logger();
+
+        // Act
+        let entry_size = std::mem::size_of::<FileEntry>();
+        let hash_size = std::mem::size_of::<u64>();
+
+        // Assert
         // 単独のときはサイズだけで、衝突したときだけ一覧を持つ（ハッシュ表の要素は
         // ハッシュ 8 バイトとエントリ）。
-        assert_eq!(std::mem::size_of::<FileEntry>(), 16);
-        assert_eq!(std::mem::size_of::<u64>(), 8);
+        assert_eq!(entry_size, 16);
+        assert_eq!(hash_size, 8);
     }
 
     #[test]
     fn set_files_without_collision_keeps_single_entries() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut node = DirNode::new(os("d"), 1, 2);
+
+        // Act
         let collisions = node
             .set_files(&hasher, &[file("a", 10), file("bb", 20), file("ccc", 30)])
             .unwrap();
+        node.finalize().unwrap();
+
+        // Assert
         assert_eq!(collisions, 0);
         assert_eq!(node.files().len(), 3);
         assert!(node
             .files()
             .values()
             .all(|entry| matches!(entry, FileEntry::Single(_))));
-        node.finalize().unwrap();
         assert_eq!(node.own_size(), 60);
         assert_eq!(node.total_size(), 60);
         let counts = node.counts();
@@ -1112,8 +1153,12 @@ mod tests {
     #[test]
     fn set_files_with_collisions_keeps_real_names_and_sizes() {
         init_logger();
+
+        // Arrange
         let hasher = colliding_hasher();
         let mut node = DirNode::new(os("d"), 1, 2);
+
+        // Act
         // "a","b","c" は長さ 1 で衝突、"dd","ee" は長さ 2 で衝突、"fff" は単独
         let collisions = node
             .set_files(
@@ -1128,9 +1173,11 @@ mod tests {
                 ],
             )
             .unwrap();
+        node.finalize().unwrap();
+
+        // Assert
         assert_eq!(collisions, 3);
         assert_eq!(node.files().len(), 3);
-        node.finalize().unwrap();
         assert_eq!(node.own_size(), 1 + 2 + 3 + 40 + 50 + 500);
         assert_eq!(node.total_size(), node.own_size());
         let counts = node.counts();
@@ -1149,9 +1196,15 @@ mod tests {
     #[test]
     fn set_files_rejects_duplicate_names_without_changing_the_node() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut node = DirNode::new(os("d"), 1, 2);
+
+        // Act
         let result = node.set_files(&hasher, &[file("a", 1), file("b", 2), file("a", 3)]);
+
+        // Assert
         assert_eq!(result, Err(TreeError::DuplicateName(os("a"))));
         assert!(node.files().is_empty());
     }
@@ -1159,10 +1212,16 @@ mod tests {
     #[test]
     fn set_files_twice_is_inconsistent() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut node = DirNode::new(os("d"), 1, 2);
         node.set_files(&hasher, &[file("a", 1)]).unwrap();
+
+        // Act
         let result = node.set_files(&hasher, &[file("b", 2)]);
+
+        // Assert
         assert!(matches!(result, Err(TreeError::Inconsistent(_))));
         assert!(result.unwrap_err().is_fatal());
         assert_eq!(node.files().len(), 1);
@@ -1171,15 +1230,21 @@ mod tests {
     #[test]
     fn finalize_propagates_sizes_from_children() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut leaf = dir_with_files("leaf", &hasher, &[("x", 5), ("y", 7)]);
-        leaf.finalize().unwrap();
         let mut mid = dir_with_files("mid", &hasher, &[("z", 100)]);
+        let mut root = dir_with_files("", &hasher, &[("r", 1000)]);
+
+        // Act
+        leaf.finalize().unwrap();
         mid.add_child(leaf).unwrap();
         mid.finalize().unwrap();
-        let mut root = dir_with_files("", &hasher, &[("r", 1000)]);
         root.add_child(mid).unwrap();
         root.finalize().unwrap();
+
+        // Assert
         assert_eq!(root.own_size(), 1000);
         assert_eq!(root.total_size(), 1112);
         let mid = root.child(&os("mid")).unwrap();
@@ -1193,20 +1258,30 @@ mod tests {
     #[test]
     fn finalize_counts_error_directories() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut bad = dir_with_files("bad", &hasher, &[]);
         bad.record_open_error(libc::EACCES);
-        bad.finalize().unwrap();
-        assert_eq!(bad.subtree_error_dir_count(), 1);
-        assert!(!bad.is_complete());
         let mut good = dir_with_files("good", &hasher, &[("a", 1)]);
-        good.finalize().unwrap();
-        assert!(good.is_complete());
         let mut root = dir_with_files("", &hasher, &[]);
         root.record_stat_error(libc::EIO);
+
+        // Act
+        bad.finalize().unwrap();
+        good.finalize().unwrap();
+
+        // Assert
+        assert_eq!(bad.subtree_error_dir_count(), 1);
+        assert!(!bad.is_complete());
+        assert!(good.is_complete());
+
+        // Act
         root.add_child(bad).unwrap();
         root.add_child(good).unwrap();
         root.finalize().unwrap();
+
+        // Assert
         // root 自身と bad
         assert_eq!(root.subtree_error_dir_count(), 2);
         assert_eq!(
@@ -1219,19 +1294,33 @@ mod tests {
     #[test]
     fn record_stat_error_classifies_errno_and_ignores_enoent() {
         init_logger();
+
+        // Arrange
         let mut node = DirNode::new(os("d"), 1, 1);
+        let mut cyclic = DirNode::new(os("c"), 1, 1);
+
+        // Act
         node.record_stat_error(libc::ENOENT);
+
+        // Assert
         assert!(!node.errors().has_error());
+
+        // Act
         node.record_stat_error(libc::EACCES);
         node.record_stat_error(libc::EACCES);
         node.record_stat_error(libc::EIO);
         node.record_stat_error(libc::EINVAL);
+
+        // Assert
         assert_eq!(node.errors().stat_eacces, 2);
         assert_eq!(node.errors().stat_eio, 1);
         assert_eq!(node.errors().stat_other, 1);
-        let mut cyclic = DirNode::new(os("c"), 1, 1);
+
+        // Act
         cyclic.record_cycle();
         cyclic.record_read_dir_error(libc::EIO);
+
+        // Assert
         assert!(cyclic.errors().cycle_detected);
         assert_eq!(cyclic.errors().read_dir_errno, Some(libc::EIO));
     }
@@ -1239,12 +1328,18 @@ mod tests {
     #[test]
     fn finalize_detects_overflow_without_changing_the_node() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut child = dir_with_files("c", &hasher, &[]);
         child.total_size = u128::MAX;
         let mut parent = dir_with_files("p", &hasher, &[("a", 1)]);
         parent.add_child(child).unwrap();
+
+        // Act
         let result = parent.finalize();
+
+        // Assert
         assert!(matches!(result, Err(TreeError::Inconsistent(_))));
         assert_eq!(parent.total_size(), 0);
         assert_eq!(parent.own_size(), 0);
@@ -1253,9 +1348,15 @@ mod tests {
     #[test]
     fn add_child_rejects_duplicate_names() {
         init_logger();
+
+        // Arrange
         let mut parent = DirNode::new(os("p"), 1, 1);
         parent.add_child(DirNode::new(os("c"), 1, 2)).unwrap();
+
+        // Act
         let result = parent.add_child(DirNode::new(os("c"), 1, 3));
+
+        // Assert
         assert_eq!(result, Err(TreeError::DuplicateName(os("c"))));
         assert_eq!(parent.children().len(), 1);
     }
@@ -1322,16 +1423,19 @@ mod tests {
     #[test]
     fn new_tree_is_unscanned() {
         init_logger();
+
+        // Act
         let tree = Tree::new();
+        let resolved = tree.resolve_partial_target(std::path::Path::new("a"));
+        let read = read_directory(&tree, std::path::Path::new(""));
+
+        // Assert
         assert_eq!(tree.generation(), 0);
         assert_eq!(tree.snapshot_state(), SnapshotState::Unscanned);
         assert!(tree.last_scan().is_none());
         assert!(tree.exclude_patterns().is_none());
         assert!(tree.root().is_none());
-        assert!(tree
-            .resolve_partial_target(std::path::Path::new("a"))
-            .is_none());
-        let read = read_directory(&tree, std::path::Path::new(""));
+        assert!(resolved.is_none());
         assert_eq!(read.directory, DirectoryLookup::NotFound);
         assert_eq!(read.status.snapshot, SnapshotState::Unscanned);
     }
@@ -1339,14 +1443,16 @@ mod tests {
     #[test]
     fn partial_apply_on_unscanned_tree_is_rejected() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut tree = Tree::new();
-        let result = tree.apply_partial(
-            std::path::Path::new(""),
-            dir(&hasher, "", &[], false, vec![]),
-            false,
-            T0,
-        );
+        let new_root = dir(&hasher, "", &[], false, vec![]);
+
+        // Act
+        let result = tree.apply_partial(std::path::Path::new(""), new_root, false, T0);
+
+        // Assert
         assert_eq!(result.err(), Some(TreeError::NotScanned));
         assert_eq!(tree.generation(), 0);
         assert!(tree.last_scan().is_none());
@@ -1355,8 +1461,14 @@ mod tests {
     #[test]
     fn full_apply_moves_unscanned_to_complete() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
+
+        // Act
         let tree = scanned_tree(hasher);
+
+        // Assert
         assert_eq!(tree.generation(), 1);
         assert_eq!(tree.snapshot_state(), SnapshotState::Complete);
         assert_eq!(tree.exclude_patterns(), Some(&patterns(&["**/.*"])));
@@ -1373,15 +1485,21 @@ mod tests {
     #[test]
     fn full_apply_with_errors_is_incomplete_and_returns_the_old_tree() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut tree = scanned_tree(hasher.clone());
         let new_hasher = NameHasher::new();
         let broken = dir(&new_hasher, "bad", &[], true, vec![]);
         let root = dir(&new_hasher, "", &[("x", 7)], false, vec![broken]);
         let new_hash_of_x = new_hasher.hash_name(&os("x"));
+
+        // Act
         let outcome = tree
             .apply_full(full_tree(root, new_hasher, &["tmp"]), true, T0)
             .unwrap();
+
+        // Assert
         assert_eq!(outcome.generation_before, 1);
         assert_eq!(outcome.generation_after, 2);
         assert_eq!(tree.generation(), 2);
@@ -1399,11 +1517,17 @@ mod tests {
             outcome.retired.name_hasher.hash_name(&os("x")),
             hasher.hash_name(&os("x"))
         );
+
+        // Arrange
         // エラーのないフルスキャンで完全に戻る
         let clean = sample_root(tree.name_hasher());
         let hasher = tree.name_hasher().clone();
+
+        // Act
         tree.apply_full(full_tree(clean, hasher, &["tmp"]), false, T0)
             .unwrap();
+
+        // Assert
         assert_eq!(tree.snapshot_state(), SnapshotState::Complete);
         assert_eq!(tree.generation(), 3);
     }
@@ -1411,9 +1535,15 @@ mod tests {
     #[test]
     fn failed_scan_keeps_the_previous_tree_and_generation() {
         init_logger();
+
+        // Arrange
         let mut tree = scanned_tree(NameHasher::new());
         let later = T0 + std::time::Duration::from_secs(5);
+
+        // Act
         tree.record_failed_scan("cannot open root".to_string(), later);
+
+        // Assert
         assert_eq!(tree.generation(), 1);
         assert_eq!(tree.snapshot_state(), SnapshotState::Complete);
         assert_eq!(tree.root_total_size(), Some(316));
@@ -1432,8 +1562,14 @@ mod tests {
     #[test]
     fn failed_scan_on_unscanned_tree_stays_unscanned() {
         init_logger();
+
+        // Arrange
         let mut tree = Tree::new();
+
+        // Act
         tree.record_failed_scan("cannot open root".to_string(), T0);
+
+        // Assert
         assert_eq!(tree.generation(), 0);
         assert_eq!(tree.snapshot_state(), SnapshotState::Unscanned);
         assert!(tree.exclude_patterns().is_none());
@@ -1446,17 +1582,30 @@ mod tests {
     #[test]
     fn generation_overflow_changes_nothing() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut tree = scanned_tree(hasher.clone());
         tree.generation = u64::MAX;
         let root = dir(&hasher, "", &[("x", 1)], false, vec![]);
+
+        // Act
         let result = tree.apply_full(full_tree(root, hasher.clone(), &[]), false, T0);
+        let is_fatal = TreeError::GenerationOverflow.is_fatal();
+
+        // Assert
         assert_eq!(result.err(), Some(TreeError::GenerationOverflow));
-        assert!(TreeError::GenerationOverflow.is_fatal());
+        assert!(is_fatal);
         assert_eq!(tree.root_total_size(), Some(316));
         assert_eq!(tree.exclude_patterns(), Some(&patterns(&["**/.*"])));
+
+        // Arrange
         let b = dir(&hasher, "b", &[], false, vec![]);
+
+        // Act
         let result = tree.apply_partial(std::path::Path::new("a/b"), b, false, T0);
+
+        // Assert
         assert_eq!(result.err(), Some(TreeError::GenerationOverflow));
         assert_eq!(total_of(&tree, "a/b"), 300);
         assert_eq!(tree.generation(), u64::MAX);
@@ -1465,6 +1614,8 @@ mod tests {
     #[test]
     fn resolve_partial_target_covers_the_design_table() {
         init_logger();
+
+        // Arrange
         // a/b がディレクトリ。.cache は除外、link はリンクなので載っていない。
         let tree = scanned_tree(NameHasher::new());
         let resolve = |path: &str| {
@@ -1479,26 +1630,41 @@ mod tests {
             effective_path: std::path::PathBuf::from(path),
             exact: false,
         };
+
+        // Act
+        let existing_dir = resolve("a/b");
+        let missing_tail = resolve("a/new/x");
+        let missing_from_root = resolve("new/x/y");
+        let file_under_dir = resolve("a/b/file.txt");
+        let file_in_dir = resolve("a/a1");
+        let excluded = resolve("a/.cache/x");
+        let symlink = resolve("a/link/x");
+        let root = resolve("");
+        let invalid = resolve("a/../z");
+
+        // Assert
         // 存在するディレクトリ
-        assert_eq!(resolve("a/b"), exact("a/b"));
+        assert_eq!(existing_dir, exact("a/b"));
         // 途中まで
-        assert_eq!(resolve("a/new/x"), partial("a"));
-        assert_eq!(resolve("new/x/y"), partial(""));
+        assert_eq!(missing_tail, partial("a"));
+        assert_eq!(missing_from_root, partial(""));
         // ファイルを指す（ファイルはディレクトリとして載っていない）
-        assert_eq!(resolve("a/b/file.txt"), partial("a/b"));
-        assert_eq!(resolve("a/a1"), partial("a"));
+        assert_eq!(file_under_dir, partial("a/b"));
+        assert_eq!(file_in_dir, partial("a"));
         // 除外対象、シンボリックリンク（どちらも載っていない）
-        assert_eq!(resolve("a/.cache/x"), partial("a"));
-        assert_eq!(resolve("a/link/x"), partial("a"));
+        assert_eq!(excluded, partial("a"));
+        assert_eq!(symlink, partial("a"));
         // ルート自身（空のパス）
-        assert_eq!(resolve(""), exact(""));
+        assert_eq!(root, exact(""));
         // 不正なパスはそこまでで止まる
-        assert_eq!(resolve("a/../z"), partial("a"));
+        assert_eq!(invalid, partial("a"));
     }
 
     #[test]
     fn resolve_partial_target_handles_non_utf8_names() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let weird = <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"d\xff");
         let child = dir(&hasher, "x", &[("f", 1)], false, vec![]);
@@ -1514,7 +1680,11 @@ mod tests {
         let mut requested = std::path::PathBuf::from(weird);
         requested.push("x");
         requested.push("missing");
+
+        // Act
         let resolved = tree.resolve_partial_target(&requested).unwrap();
+
+        // Assert
         assert_eq!(
             resolved.effective_path,
             std::path::PathBuf::from(weird).join("x")
@@ -1525,12 +1695,18 @@ mod tests {
     #[test]
     fn partial_apply_replaces_subtree_and_updates_ancestors() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut tree = scanned_tree(hasher.clone());
         let new_b = dir(&hasher, "b", &[("n", 1000)], false, vec![]);
+
+        // Act
         let outcome = tree
             .apply_partial(std::path::Path::new("a/b"), new_b, false, T0)
             .unwrap();
+
+        // Assert
         assert_eq!(outcome.generation_before, 1);
         assert_eq!(outcome.generation_after, 2);
         assert_eq!(outcome.retired_subtree.total_size(), 300);
@@ -1548,11 +1724,17 @@ mod tests {
     #[test]
     fn partial_apply_with_empty_result_shrinks_ancestors() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut tree = scanned_tree(hasher.clone());
         let empty_b = dir(&hasher, "b", &[], false, vec![]);
+
+        // Act
         tree.apply_partial(std::path::Path::new("a/b"), empty_b, false, T0)
             .unwrap();
+
+        // Assert
         assert_eq!(total_of(&tree, "a"), 10);
         assert_eq!(total_of(&tree, ""), 16);
     }
@@ -1560,6 +1742,8 @@ mod tests {
     #[test]
     fn partial_apply_propagates_error_directory_counts() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut tree = scanned_tree(hasher.clone());
         let broken_c = dir(
@@ -1569,8 +1753,12 @@ mod tests {
             true,
             vec![dir(&hasher, "d", &[], true, vec![])],
         );
+
+        // Act
         tree.apply_partial(std::path::Path::new("a/c"), broken_c, true, T0)
             .unwrap();
+
+        // Assert
         assert_eq!(tree.snapshot_state(), SnapshotState::Incomplete);
         assert_eq!(
             tree.last_scan().unwrap().outcome,
@@ -1600,10 +1788,16 @@ mod tests {
             .find_dir(std::path::Path::new("z"))
             .unwrap()
             .is_complete());
+
+        // Arrange
         // エラーのない部分木に差し替えると完全に戻る
         let clean_c = dir(&hasher, "c", &[("k", 3)], false, vec![]);
+
+        // Act
         tree.apply_partial(std::path::Path::new("a/c"), clean_c, false, T0)
             .unwrap();
+
+        // Assert
         assert_eq!(tree.snapshot_state(), SnapshotState::Complete);
         assert_eq!(tree.generation(), 3);
         assert_eq!(total_of(&tree, ""), 319);
@@ -1612,12 +1806,18 @@ mod tests {
     #[test]
     fn partial_apply_at_root_replaces_the_root_and_keeps_patterns() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut tree = scanned_tree(hasher.clone());
         let new_root = dir(&hasher, "", &[("only", 9)], false, vec![]);
+
+        // Act
         let outcome = tree
             .apply_partial(std::path::Path::new(""), new_root, false, T0)
             .unwrap();
+
+        // Assert
         assert_eq!(outcome.retired_subtree.total_size(), 316);
         assert_eq!(tree.root_total_size(), Some(9));
         assert_eq!(tree.exclude_patterns(), Some(&patterns(&["**/.*"])));
@@ -1627,25 +1827,31 @@ mod tests {
     #[test]
     fn partial_apply_rejects_bad_arguments_without_changes() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut tree = scanned_tree(hasher.clone());
         let new_node = |name: &str| dir(&hasher, name, &[("n", 1)], false, vec![]);
+
+        // Act
         let not_found =
             tree.apply_partial(std::path::Path::new("a/zzz"), new_node("zzz"), false, T0);
+        let missing_parent =
+            tree.apply_partial(std::path::Path::new("q/zzz"), new_node("zzz"), false, T0);
+        let parent_dir =
+            tree.apply_partial(std::path::Path::new("a/../z"), new_node("z"), false, T0);
+        let mismatch = tree.apply_partial(std::path::Path::new("a/b"), new_node("c"), false, T0);
+
+        // Assert
         assert_eq!(
             not_found.err(),
             Some(TreeError::PathNotFound(std::path::PathBuf::from("a/zzz")))
         );
-        let missing_parent =
-            tree.apply_partial(std::path::Path::new("q/zzz"), new_node("zzz"), false, T0);
         assert!(matches!(
             missing_parent.err(),
             Some(TreeError::PathNotFound(_))
         ));
-        let parent_dir =
-            tree.apply_partial(std::path::Path::new("a/../z"), new_node("z"), false, T0);
         assert!(matches!(parent_dir.err(), Some(TreeError::PathNotFound(_))));
-        let mismatch = tree.apply_partial(std::path::Path::new("a/b"), new_node("c"), false, T0);
         assert!(matches!(mismatch.err(), Some(TreeError::Inconsistent(_))));
         assert_eq!(tree.generation(), 1);
         assert_eq!(tree.root_total_size(), Some(316));
@@ -1670,8 +1876,10 @@ mod tests {
     #[test]
     fn checked_sub_failure_is_detected_before_any_write() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
-        // 途中の祖先 a の合計が、子 b の合計より小さい（内部不整合）
+        // 途中の祖先 a の合計が子 b の合計より小さい（内部不整合）
         let mut tree = scanned_tree(hasher.clone());
         tree.root
             .as_mut()
@@ -1682,22 +1890,31 @@ mod tests {
             .total_size = 50;
         let before = snapshot_of(&tree);
         let new_b = dir(&hasher, "b", &[("n", 1)], false, vec![]);
+
+        // Act
         let err = tree
             .apply_partial(std::path::Path::new("a/b"), new_b, false, T0)
             .err()
             .unwrap();
+
+        // Assert
         assert!(matches!(err, TreeError::Inconsistent(_)));
         assert!(err.is_fatal());
         // ルートは先に更新される位置だが、二段階なので何も書かれていない
         assert_eq!(snapshot_of(&tree), before);
         assert_eq!(tree.last_scan().unwrap().finished_at, T0);
 
+        // Arrange
         // ルートの合計がおかしい場合
         let mut tree = scanned_tree(hasher.clone());
         tree.root.as_mut().unwrap().total_size = 0;
         let before = snapshot_of(&tree);
         let new_b = dir(&hasher, "b", &[("n", 1)], false, vec![]);
+
+        // Act
         let result = tree.apply_partial(std::path::Path::new("a/b"), new_b, false, T0);
+
+        // Assert
         assert!(result.err().unwrap().is_fatal());
         assert_eq!(snapshot_of(&tree), before);
     }
@@ -1705,6 +1922,8 @@ mod tests {
     #[test]
     fn error_count_underflow_is_detected_before_any_write() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let broken_b = dir(&hasher, "b", &[("b1", 1)], true, vec![]);
         let a = dir(&hasher, "a", &[], false, vec![broken_b]);
@@ -1722,7 +1941,11 @@ mod tests {
             .subtree_error_dir_count = 0;
         let before = snapshot_of(&tree);
         let new_b = dir(&hasher, "b", &[("n", 1)], false, vec![]);
+
+        // Act
         let result = tree.apply_partial(std::path::Path::new("a/b"), new_b, false, T0);
+
+        // Assert
         assert!(result.err().unwrap().is_fatal());
         assert_eq!(snapshot_of(&tree), before);
     }
@@ -1730,13 +1953,19 @@ mod tests {
     #[test]
     fn total_size_overflow_on_partial_apply_is_inconsistent() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut tree = scanned_tree(hasher.clone());
         tree.root.as_mut().unwrap().total_size = u128::MAX;
         let before = snapshot_of(&tree);
         let mut huge = dir(&hasher, "b", &[("n", 1)], false, vec![]);
         huge.total_size = u128::MAX;
+
+        // Act
         let result = tree.apply_partial(std::path::Path::new("a/b"), huge, false, T0);
+
+        // Assert
         assert!(result.err().unwrap().is_fatal());
         assert_eq!(snapshot_of(&tree), before);
     }
@@ -1744,9 +1973,17 @@ mod tests {
     #[test]
     fn read_directory_returns_totals_with_completeness() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut tree = scanned_tree(hasher.clone());
+
+        // Act
         let read = read_directory(&tree, std::path::Path::new(""));
+        let missing = read_directory(&tree, std::path::Path::new("a/nothing"));
+        let invalid = read_directory(&tree, std::path::Path::new("../a"));
+
+        // Assert
         assert_eq!(read.status.generation, 1);
         assert_eq!(read.status.snapshot, SnapshotState::Complete);
         assert_eq!(
@@ -1769,14 +2006,18 @@ mod tests {
                 ],
             })
         );
-        let missing = read_directory(&tree, std::path::Path::new("a/nothing"));
         assert_eq!(missing.directory, DirectoryLookup::NotFound);
-        let invalid = read_directory(&tree, std::path::Path::new("../a"));
         assert_eq!(invalid.directory, DirectoryLookup::NotFound);
+
+        // Arrange
         let broken_z = dir(&hasher, "z", &[("z1", 5)], true, vec![]);
         tree.apply_partial(std::path::Path::new("z"), broken_z, true, T0)
             .unwrap();
+
+        // Act
         let read = read_directory(&tree, std::path::Path::new(""));
+
+        // Assert
         match read.directory {
             DirectoryLookup::Found(found) => {
                 assert!(!found.complete);
@@ -1791,8 +2032,17 @@ mod tests {
     #[test]
     fn list_own_sizes_lists_every_directory_in_path_order() {
         init_logger();
-        let tree = Tree::new();
-        assert!(list_own_sizes(&tree).is_empty());
+
+        // Arrange
+        let unscanned = Tree::new();
+
+        // Act
+        let unscanned_list = list_own_sizes(&unscanned);
+
+        // Assert
+        assert!(unscanned_list.is_empty());
+
+        // Arrange
         let tree = scanned_tree(NameHasher::new());
         let expected: Vec<(std::path::PathBuf, u128)> = vec![
             (std::path::PathBuf::from(""), 1),
@@ -1801,7 +2051,12 @@ mod tests {
             (std::path::PathBuf::from("a/c"), 0),
             (std::path::PathBuf::from("z"), 5),
         ];
-        assert_eq!(list_own_sizes(&tree), expected);
+
+        // Act
+        let actual = list_own_sizes(&tree);
+
+        // Assert
+        assert_eq!(actual, expected);
     }
 
     // ---- ハッシュ衝突中のファイルの削除・サイズ変更（実名で引く） ----
@@ -1897,7 +2152,11 @@ mod tests {
     #[test]
     fn colliding_names_keep_sizes_correct_through_the_tree() {
         init_logger();
+
+        // Act
         let tree = colliding_tree_with(&[("one", 1), ("two", 2), ("six", 3), ("longer", 40)]);
+
+        // Assert
         assert_eq!(total_of(&tree, "d"), 46);
         assert_eq!(
             tree.find_dir(std::path::Path::new("d")).unwrap().own_size(),
@@ -1912,23 +2171,37 @@ mod tests {
     #[test]
     fn collided_file_size_change_and_removal_use_the_real_name() {
         init_logger();
+
+        // Arrange
         let mut tree = colliding_tree_with(&[("one", 1), ("two", 2), ("six", 3), ("longer", 40)]);
+
+        // Act
         // 衝突中のファイル "two" のサイズを変える
         change_file(&mut tree, "d", "two", Some(20));
+
+        // Assert
         assert_eq!(total_of(&tree, "d"), 64);
         assert_eq!(total_of(&tree, ""), 1064);
         let expected = colliding_tree_with(&[("one", 1), ("two", 20), ("six", 3), ("longer", 40)]);
         assert_eq!(tree.root(), expected.root());
+
+        // Act
         // 衝突中のファイル "one" を削除する。他の 2 つのサイズは影響を受けない
         change_file(&mut tree, "d", "one", None);
+
+        // Assert
         assert_eq!(total_of(&tree, "d"), 63);
         assert_eq!(total_of(&tree, ""), 1063);
         let expected = colliding_tree_with(&[("two", 20), ("six", 3), ("longer", 40)]);
         assert_eq!(tree.root(), expected.root());
         assert_eq!(tree.root().unwrap().counts().hash_collision_count, 1);
+
+        // Act
         // 残りも削除すると、エントリが消える
         change_file(&mut tree, "d", "two", None);
         change_file(&mut tree, "d", "six", None);
+
+        // Assert
         assert_eq!(total_of(&tree, "d"), 40);
         assert_eq!(tree.root().unwrap().counts().hash_collision_count, 0);
         assert!(
@@ -1943,12 +2216,22 @@ mod tests {
     #[test]
     fn single_entry_size_change_and_removal_propagate_to_ancestors() {
         init_logger();
+
+        // Arrange
         let hasher = NameHasher::new();
         let mut tree = scanned_tree(hasher);
+
+        // Act
         change_file(&mut tree, "a/b", "b1", Some(1));
+
+        // Assert
         assert_eq!(total_of(&tree, "a/b"), 201);
         assert_eq!(total_of(&tree, ""), 217);
+
+        // Act
         change_file(&mut tree, "a/b", "b2", None);
+
+        // Assert
         assert_eq!(total_of(&tree, "a/b"), 1);
         assert_eq!(total_of(&tree, "a"), 11);
         assert_eq!(total_of(&tree, ""), 17);
@@ -1963,6 +2246,8 @@ mod tests {
     #[test]
     fn partial_apply_with_collisions_matches_a_full_build() {
         init_logger();
+
+        // Arrange
         let hasher = colliding_hasher();
         let build = |sub_files: &[(&str, u64)]| {
             let sub = dir(&hasher, "sub", sub_files, false, vec![]);
@@ -1982,9 +2267,13 @@ mod tests {
             false,
             vec![],
         );
+        let expected = build(&[("u", 7), ("v", 8), ("ww", 9)]);
+
+        // Act
         tree.apply_partial(std::path::Path::new("sub"), new_sub, false, T0)
             .unwrap();
-        let expected = build(&[("u", 7), ("v", 8), ("ww", 9)]);
+
+        // Assert
         assert_eq!(tree.root(), Some(&expected));
         assert_eq!(tree.root().unwrap().counts().hash_collision_count, 2);
     }
@@ -2074,6 +2363,7 @@ mod tests {
             target_pick in proptest::prelude::any::<proptest::sample::Index>(),
             collide in proptest::prelude::any::<bool>(),
         ) {
+            // Arrange
             let hasher = if collide { colliding_hasher() } else { NameHasher::new() };
             let old_model = model_from(&old_entries);
             let targets: Vec<&Vec<u8>> = old_model.keys().collect();
@@ -2091,7 +2381,6 @@ mod tests {
                 expected_model.insert(path, sub_dir.clone());
             }
             let expected_root = build_model_node(&expected_model, &[], &hasher);
-
             let mut tree = Tree::new();
             tree.apply_full(
                 FullScanTree {
@@ -2104,7 +2393,11 @@ mod tests {
             ).unwrap();
             // 部分スキャン側の部分木は、expected_model の target 以下から作る
             let new_subtree = build_model_node(&expected_model, &target, &hasher);
+
+            // Act
             tree.apply_partial(&path_of(&target), new_subtree, false, T0).unwrap();
+
+            // Assert
             proptest::prop_assert_eq!(tree.root(), Some(&expected_root));
             proptest::prop_assert_eq!(tree.generation(), 2);
             let root = tree.root().unwrap();
