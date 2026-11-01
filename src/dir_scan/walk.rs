@@ -912,9 +912,16 @@ mod tests {
     #[test]
     fn full_walk_sums_nested_directories() {
         init_logger();
+
+        // Arrange
         let tree = sample_tree();
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, result) = success(full_walk(tree.path(), &settings(4, &[]), &hasher));
+
+        // Act
+        let walk_result = full_walk(tree.path(), &settings(4, &[]), &hasher);
+
+        // Assert
+        let (ok, result) = success(walk_result);
         let root = &ok.node;
         assert_eq!(root.name(), std::ffi::OsStr::new(""));
         assert_eq!(root.own_size(), 10);
@@ -942,13 +949,20 @@ mod tests {
     #[test]
     fn hard_links_are_counted_per_name() {
         init_logger();
+
+        // Arrange
         let tree = tempfile::tempdir().unwrap();
         make_file(tree.path(), "orig", 100);
         std::fs::hard_link(tree.path().join("orig"), tree.path().join("link")).unwrap();
         make_dir(tree.path(), "d");
         std::fs::hard_link(tree.path().join("orig"), tree.path().join("d/another")).unwrap();
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, _) = success(full_walk(tree.path(), &settings(2, &[]), &hasher));
+
+        // Act
+        let walk_result = full_walk(tree.path(), &settings(2, &[]), &hasher);
+
+        // Assert
+        let (ok, _) = success(walk_result);
         assert_eq!(ok.node.own_size(), 200);
         assert_eq!(ok.node.total_size(), 300);
         assert_eq!(ok.counts.file_count, 3);
@@ -957,12 +971,19 @@ mod tests {
     #[test]
     fn directory_own_size_is_not_included() {
         init_logger();
+
+        // Arrange
         let tree = tempfile::tempdir().unwrap();
         for i in 0..200 {
             make_dir(tree.path(), &format!("many_dirs/d{i:03}"));
         }
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, _) = success(full_walk(tree.path(), &settings(2, &[]), &hasher));
+
+        // Act
+        let walk_result = full_walk(tree.path(), &settings(2, &[]), &hasher);
+
+        // Assert
+        let (ok, _) = success(walk_result);
         assert_eq!(ok.node.total_size(), 0);
         assert_eq!(ok.counts.dir_count, 202);
         assert_eq!(ok.counts.file_count, 0);
@@ -971,6 +992,8 @@ mod tests {
     #[test]
     fn exclude_patterns_skip_dotfiles_and_subtrees() {
         init_logger();
+
+        // Arrange
         let tree = tempfile::tempdir().unwrap();
         make_file(tree.path(), "visible", 1);
         // ルート直下の隠しファイルと隠しディレクトリ
@@ -982,11 +1005,12 @@ mod tests {
         make_file(tree.path(), "a/skip/z", 1000);
         make_file(tree.path(), "a/skip_not/z", 4);
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, result) = success(full_walk(
-            tree.path(),
-            &settings(3, &["**/.*", "a/skip"]),
-            &hasher,
-        ));
+
+        // Act
+        let walk_result = full_walk(tree.path(), &settings(3, &["**/.*", "a/skip"]), &hasher);
+
+        // Assert
+        let (ok, result) = success(walk_result);
         let root = &ok.node;
         assert_eq!(root.own_size(), 1);
         assert!(root.child(std::ffi::OsStr::new(".hidden_dir")).is_none());
@@ -1009,18 +1033,25 @@ mod tests {
     #[test]
     fn exclude_patterns_use_path_from_root_in_partial_walk() {
         init_logger();
+
+        // Arrange
         let tree = tempfile::tempdir().unwrap();
         make_file(tree.path(), "a/keep", 2);
         make_file(tree.path(), "a/b/.dot", 1000);
         make_file(tree.path(), "a/skip/z", 1000);
         make_file(tree.path(), "a/b/c/v", 8);
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, result) = success(partial_walk(
+
+        // Act
+        let walk_result = partial_walk(
             tree.path(),
             "a",
             &settings(2, &["**/.*", "a/skip"]),
             &hasher,
-        ));
+        );
+
+        // Assert
+        let (ok, result) = success(walk_result);
         assert_eq!(result.effective_path, std::path::Path::new("a"));
         assert_eq!(ok.node.name(), std::ffi::OsStr::new("a"));
         assert_eq!(ok.node.total_size(), 10);
@@ -1030,6 +1061,8 @@ mod tests {
     #[test]
     fn symlinks_are_counted_as_files_and_not_followed() {
         init_logger();
+
+        // Arrange
         let tree = tempfile::tempdir().unwrap();
         make_file(tree.path(), "real/big", 1_000_000);
         make_dir(tree.path(), "d");
@@ -1047,9 +1080,14 @@ mod tests {
             )
         };
         let expected = lstat_size("to_real") + lstat_size("broken") + lstat_size("to_big");
-        assert_eq!(lstat_size("to_real"), "../real".len() as u128);
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, result) = success(full_walk(tree.path(), &settings(4, &[]), &hasher));
+
+        // Act
+        let walk_result = full_walk(tree.path(), &settings(4, &[]), &hasher);
+
+        // Assert
+        assert_eq!(lstat_size("to_real"), "../real".len() as u128);
+        let (ok, result) = success(walk_result);
         let d = ok.node.child(std::ffi::OsStr::new("d")).unwrap();
         assert_eq!(d.own_size(), expected);
         assert!(d.child(std::ffi::OsStr::new("to_real")).is_none());
@@ -1062,6 +1100,8 @@ mod tests {
     #[test]
     fn partial_target_that_is_a_symlink_falls_back_to_parent() {
         init_logger();
+
+        // Arrange
         let tree = tempfile::tempdir().unwrap();
         make_file(tree.path(), "real/sub/f", 5);
         make_dir(tree.path(), "d");
@@ -1073,12 +1113,12 @@ mod tests {
                 .len(),
         );
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, result) = success(partial_walk(
-            tree.path(),
-            "d/link",
-            &settings(2, &[]),
-            &hasher,
-        ));
+
+        // Act
+        let walk_result = partial_walk(tree.path(), "d/link", &settings(2, &[]), &hasher);
+
+        // Assert
+        let (ok, result) = success(walk_result);
         assert_eq!(result.effective_path, std::path::Path::new("d"));
         assert_eq!(result.parent_retries.len(), 1);
         let retry = &result.parent_retries[0];
@@ -1093,17 +1133,19 @@ mod tests {
     #[test]
     fn symlink_in_the_middle_of_target_path_is_not_followed() {
         init_logger();
+
+        // Arrange
         let tree = tempfile::tempdir().unwrap();
         make_file(tree.path(), "real/sub/f", 5);
         make_dir(tree.path(), "d");
         std::os::unix::fs::symlink("../real", tree.path().join("d/link")).unwrap();
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, result) = success(partial_walk(
-            tree.path(),
-            "d/link/sub",
-            &settings(2, &[]),
-            &hasher,
-        ));
+
+        // Act
+        let walk_result = partial_walk(tree.path(), "d/link/sub", &settings(2, &[]), &hasher);
+
+        // Assert
+        let (ok, result) = success(walk_result);
         // d/link/sub -> d/link -> d の順に遡る
         assert_eq!(result.effective_path, std::path::Path::new("d"));
         assert_eq!(result.parent_retries.len(), 2);
@@ -1131,6 +1173,8 @@ mod tests {
     #[test]
     fn fifo_and_socket_are_not_counted() {
         init_logger();
+
+        // Arrange
         let tree = tempfile::tempdir().unwrap();
         make_file(tree.path(), "regular", 7);
         rustix::fs::mknodat(
@@ -1143,7 +1187,12 @@ mod tests {
         .unwrap();
         let _socket = std::os::unix::net::UnixListener::bind(tree.path().join("sock")).unwrap();
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, result) = success(full_walk(tree.path(), &settings(2, &[]), &hasher));
+
+        // Act
+        let walk_result = full_walk(tree.path(), &settings(2, &[]), &hasher);
+
+        // Assert
+        let (ok, result) = success(walk_result);
         assert_eq!(ok.node.own_size(), 7);
         assert_eq!(ok.counts.file_count, 1);
         assert_eq!(result.errors.total(), 0);
@@ -1152,6 +1201,8 @@ mod tests {
     #[test]
     fn non_utf8_names_are_handled_as_bytes() {
         init_logger();
+
+        // Arrange
         let tree = tempfile::tempdir().unwrap();
         let file_name = os(b"file\xff\xfe.txt");
         let dir_name = os(b"dir\xc3");
@@ -1164,33 +1215,50 @@ mod tests {
             .unwrap()
             .set_len(22)
             .unwrap();
-        // 非 UTF-8 の名前は `**/.*` にも `*` で当たりうるが、ここでは当たらないパターンで確認する
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, result) = success(full_walk(tree.path(), &settings(2, &["**/.*"]), &hasher));
+
+        // Act
+        // 非 UTF-8 の名前は `**/.*` にも `*` で当たりうるが、ここでは当たらないパターンで確認する
+        let walk_result = full_walk(tree.path(), &settings(2, &["**/.*"]), &hasher);
+
+        // Assert
+        let (ok, result) = success(walk_result);
         assert_eq!(ok.node.own_size(), 11);
         let dir = ok.node.child(dir_name).unwrap();
         assert_eq!(dir.own_size(), 22);
         assert_eq!(ok.node.total_size(), 33);
         assert_eq!(result.errors.total(), 0);
+
+        // Act
         // 部分スキャンの対象にも非 UTF-8 の名前を使える
-        let (partial, _) = success(run_walk(
+        let partial_result = run_walk(
             tree.path(),
             std::path::Path::new(dir_name),
             &[],
             &settings(2, &[]),
             &hasher,
             std::sync::Arc::new(crate::dir_scan::report::ErrorRecorder::new()),
-        ));
+        );
+
+        // Assert
+        let (partial, _) = success(partial_result);
         assert_eq!(partial.node.name(), dir_name);
         assert_eq!(partial.node, *dir);
+
+        // Act
         // 非 UTF-8 の名前にもワイルドカードは当たる
-        let (excluded, _) = success(full_walk(tree.path(), &settings(2, &["dir*"]), &hasher));
+        let excluded_result = full_walk(tree.path(), &settings(2, &["dir*"]), &hasher);
+
+        // Assert
+        let (excluded, _) = success(excluded_result);
         assert!(excluded.node.child(dir_name).is_none());
     }
 
     #[test]
     fn unreadable_directory_is_kept_as_error_node() {
         init_logger();
+
+        // Arrange
         if is_root() {
             return;
         }
@@ -1202,9 +1270,14 @@ mod tests {
         std::fs::set_permissions(&secret, std::os::unix::fs::PermissionsExt::from_mode(0o000))
             .unwrap();
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, result) = success(full_walk(tree.path(), &settings(2, &[]), &hasher));
+
+        // Act
+        let walk_result = full_walk(tree.path(), &settings(2, &[]), &hasher);
         std::fs::set_permissions(&secret, std::os::unix::fs::PermissionsExt::from_mode(0o700))
             .unwrap();
+
+        // Assert
+        let (ok, result) = success(walk_result);
         let root = &ok.node;
         let node = root.child(std::ffi::OsStr::new("secret")).unwrap();
         assert_eq!(node.errors().open_errno, Some(libc::EACCES));
@@ -1231,6 +1304,8 @@ mod tests {
     #[test]
     fn stat_failure_excludes_file_and_marks_directory() {
         init_logger();
+
+        // Arrange
         if is_root() {
             return;
         }
@@ -1243,9 +1318,14 @@ mod tests {
         std::fs::set_permissions(&noexec, std::os::unix::fs::PermissionsExt::from_mode(0o400))
             .unwrap();
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, result) = success(full_walk(tree.path(), &settings(2, &[]), &hasher));
+
+        // Act
+        let walk_result = full_walk(tree.path(), &settings(2, &[]), &hasher);
         std::fs::set_permissions(&noexec, std::os::unix::fs::PermissionsExt::from_mode(0o700))
             .unwrap();
+
+        // Assert
+        let (ok, result) = success(walk_result);
         let node = ok.node.child(std::ffi::OsStr::new("noexec")).unwrap();
         assert_eq!(node.errors().stat_eacces, 2);
         assert_eq!(node.errors().open_errno, None);
@@ -1264,16 +1344,19 @@ mod tests {
     #[test]
     fn partial_walk_matches_the_same_part_of_full_walk() {
         init_logger();
+
+        // Arrange
         let tree = sample_tree();
         make_file(tree.path(), "a/b/c/f5", 50);
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (full, _) = success(full_walk(tree.path(), &settings(4, &["**/.*"]), &hasher));
-        let (partial, result) = success(partial_walk(
-            tree.path(),
-            "a/b",
-            &settings(4, &["**/.*"]),
-            &hasher,
-        ));
+
+        // Act
+        let full_result = full_walk(tree.path(), &settings(4, &["**/.*"]), &hasher);
+        let partial_result = partial_walk(tree.path(), "a/b", &settings(4, &["**/.*"]), &hasher);
+
+        // Assert
+        let (full, _) = success(full_result);
+        let (partial, result) = success(partial_result);
         assert_eq!(result.effective_path, std::path::Path::new("a/b"));
         assert!(result.parent_retries.is_empty());
         let expected = full
@@ -1285,16 +1368,19 @@ mod tests {
         assert_eq!(partial.node.name(), std::ffi::OsStr::new("b"));
         assert_eq!(partial.node.total_size(), 90);
         assert_eq!(&partial.node, expected);
+
+        // Arrange
         // ファイルを変更してからの部分スキャンは、同じ状態のフルスキャンと一致する
         make_file(tree.path(), "a/b/c/f6", 6);
         std::fs::remove_file(tree.path().join("a/b/f4")).unwrap();
-        let (full2, _) = success(full_walk(tree.path(), &settings(4, &["**/.*"]), &hasher));
-        let (partial2, _) = success(partial_walk(
-            tree.path(),
-            "a/b",
-            &settings(1, &["**/.*"]),
-            &hasher,
-        ));
+
+        // Act
+        let full_result2 = full_walk(tree.path(), &settings(4, &["**/.*"]), &hasher);
+        let partial_result2 = partial_walk(tree.path(), "a/b", &settings(1, &["**/.*"]), &hasher);
+
+        // Assert
+        let (full2, _) = success(full_result2);
+        let (partial2, _) = success(partial_result2);
         let expected2 = full2
             .node
             .child(std::ffi::OsStr::new("a"))
@@ -1308,10 +1394,17 @@ mod tests {
     #[test]
     fn partial_target_that_vanished_falls_back_to_parent() {
         init_logger();
+
+        // Arrange
         let tree = sample_tree();
         std::fs::remove_dir_all(tree.path().join("a/b")).unwrap();
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, result) = success(partial_walk(tree.path(), "a/b", &settings(2, &[]), &hasher));
+
+        // Act
+        let walk_result = partial_walk(tree.path(), "a/b", &settings(2, &[]), &hasher);
+
+        // Assert
+        let (ok, result) = success(walk_result);
         assert_eq!(result.effective_path, std::path::Path::new("a"));
         assert_eq!(
             result.parent_retries,
@@ -1328,11 +1421,18 @@ mod tests {
     #[test]
     fn partial_target_replaced_by_file_falls_back_to_parent() {
         init_logger();
+
+        // Arrange
         let tree = sample_tree();
         std::fs::remove_dir_all(tree.path().join("a/b")).unwrap();
         make_file(tree.path(), "a/b", 77);
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, result) = success(partial_walk(tree.path(), "a/b", &settings(2, &[]), &hasher));
+
+        // Act
+        let walk_result = partial_walk(tree.path(), "a/b", &settings(2, &[]), &hasher);
+
+        // Assert
+        let (ok, result) = success(walk_result);
         assert_eq!(result.effective_path, std::path::Path::new("a"));
         assert_eq!(result.parent_retries.len(), 1);
         assert_eq!(result.parent_retries[0].errno, libc::ENOTDIR);
@@ -1343,10 +1443,18 @@ mod tests {
     #[test]
     fn partial_target_falls_back_up_to_the_root() {
         init_logger();
+
+        // Arrange
         let tree = sample_tree();
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (full, _) = success(full_walk(tree.path(), &settings(2, &[]), &hasher));
-        let (ok, result) = success(partial_walk(tree.path(), "x/y", &settings(2, &[]), &hasher));
+
+        // Act
+        let full_result = full_walk(tree.path(), &settings(2, &[]), &hasher);
+        let partial_result = partial_walk(tree.path(), "x/y", &settings(2, &[]), &hasher);
+
+        // Assert
+        let (full, _) = success(full_result);
+        let (ok, result) = success(partial_result);
         assert!(result.effective_path.as_os_str().is_empty());
         assert_eq!(result.parent_retries.len(), 2);
         assert_eq!(
@@ -1360,6 +1468,8 @@ mod tests {
     #[test]
     fn partial_target_that_is_unreadable_fails_without_retry() {
         init_logger();
+
+        // Arrange
         if is_root() {
             return;
         }
@@ -1369,9 +1479,13 @@ mod tests {
         std::fs::set_permissions(&secret, std::os::unix::fs::PermissionsExt::from_mode(0o000))
             .unwrap();
         let hasher = crate::dir_scan::tree::NameHasher::new();
+
+        // Act
         let result = partial_walk(tree.path(), "a/secret", &settings(2, &[]), &hasher);
         std::fs::set_permissions(&secret, std::os::unix::fs::PermissionsExt::from_mode(0o700))
             .unwrap();
+
+        // Assert
         assert_eq!(
             failure(&result),
             &WalkFailure::TargetOpenFailed {
@@ -1394,10 +1508,16 @@ mod tests {
     #[test]
     fn missing_or_non_directory_root_fails() {
         init_logger();
+
+        // Arrange
         let tree = tempfile::tempdir().unwrap();
         let hasher = crate::dir_scan::tree::NameHasher::new();
         let missing = tree.path().join("missing");
+
+        // Act
         let result = full_walk(&missing, &settings(2, &[]), &hasher);
+
+        // Assert
         assert_eq!(
             failure(&result),
             &WalkFailure::RootOpenFailed {
@@ -1413,8 +1533,13 @@ mod tests {
             1
         );
 
+        // Arrange
         make_file(tree.path(), "file", 1);
+
+        // Act
         let result = full_walk(&tree.path().join("file"), &settings(2, &[]), &hasher);
+
+        // Assert
         assert_eq!(
             failure(&result),
             &WalkFailure::RootOpenFailed {
@@ -1422,8 +1547,11 @@ mod tests {
             }
         );
 
+        // Act
         // 部分スキャンでもルートが開けなければ失敗（親に遡らない）
         let result = partial_walk(&missing, "a", &settings(2, &[]), &hasher);
+
+        // Assert
         assert_eq!(
             failure(&result),
             &WalkFailure::RootOpenFailed {
@@ -1436,29 +1564,45 @@ mod tests {
     #[test]
     fn root_that_is_a_symlink_to_a_directory_is_followed() {
         init_logger();
+
+        // Arrange
         let tree = tempfile::tempdir().unwrap();
         make_file(tree.path(), "real/f", 9);
         std::os::unix::fs::symlink("real", tree.path().join("root_link")).unwrap();
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, _) = success(full_walk(
-            &tree.path().join("root_link"),
-            &settings(2, &[]),
-            &hasher,
-        ));
+
+        // Act
+        let walk_result = full_walk(&tree.path().join("root_link"), &settings(2, &[]), &hasher);
+
+        // Assert
+        let (ok, _) = success(walk_result);
         assert_eq!(ok.node.total_size(), 9);
     }
 
     #[test]
     fn invalid_target_is_rejected() {
         init_logger();
+
+        // Arrange
         let tree = sample_tree();
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let result = partial_walk(tree.path(), "a/../b", &settings(1, &[]), &hasher);
-        assert!(matches!(failure(&result), WalkFailure::InvalidTarget(_)));
-        let result = partial_walk(tree.path(), "/abs", &settings(1, &[]), &hasher);
-        assert!(matches!(failure(&result), WalkFailure::InvalidTarget(_)));
+
+        // Act
+        let parent_dir_result = partial_walk(tree.path(), "a/../b", &settings(1, &[]), &hasher);
+        let absolute_result = partial_walk(tree.path(), "/abs", &settings(1, &[]), &hasher);
         // `.` は飛ばす
-        let (ok, result) = success(partial_walk(tree.path(), "./a", &settings(1, &[]), &hasher));
+        let cur_dir_result = partial_walk(tree.path(), "./a", &settings(1, &[]), &hasher);
+
+        // Assert
+        assert!(matches!(
+            failure(&parent_dir_result),
+            WalkFailure::InvalidTarget(_)
+        ));
+        assert!(matches!(
+            failure(&absolute_result),
+            WalkFailure::InvalidTarget(_)
+        ));
+        let (ok, result) = success(cur_dir_result);
         assert_eq!(result.effective_path, std::path::Path::new("a"));
         assert_eq!(ok.node.name(), std::ffi::OsStr::new("a"));
     }
@@ -1484,6 +1628,8 @@ mod tests {
     #[test]
     fn directory_that_is_its_own_ancestor_is_a_cycle() {
         init_logger();
+
+        // Arrange
         let tree = sample_tree();
         let root_fd = open_dir(tree.path());
         let a_identity = dev_ino_of(&open_dir(&tree.path().join("a")));
@@ -1497,6 +1643,7 @@ mod tests {
             errors: &errors,
         };
 
+        // Act
         // 祖先の一覧に `a` の dev/ino を入れてルートから走査すると、`a` が循環になる
         let node = walk_opened(
             &context,
@@ -1507,6 +1654,8 @@ mod tests {
             &[a_identity],
         )
         .unwrap();
+
+        // Assert
         let a = node.child(std::ffi::OsStr::new("a")).unwrap();
         assert!(a.errors().cycle_detected);
         assert_eq!(a.total_size(), 0);
@@ -1525,8 +1674,11 @@ mod tests {
         // 循環には errno が無い
         assert_eq!(counts.by_errno.len(), 0);
 
-        // 祖先に自分自身があればそのディレクトリ自身が循環になる
+        // Arrange
         let own_identity = dev_ino_of(&open_dir(tree.path()));
+
+        // Act
+        // 祖先に自分自身があればそのディレクトリ自身が循環になる
         let cyclic = walk_opened(
             &context,
             open_dir(tree.path()),
@@ -1536,6 +1688,8 @@ mod tests {
             &[own_identity],
         )
         .unwrap();
+
+        // Assert
         assert!(cyclic.errors().cycle_detected);
         assert_eq!(cyclic.total_size(), 0);
         assert_eq!(
@@ -1568,17 +1722,19 @@ mod tests {
     #[test]
     fn partial_walk_treats_a_descendant_equal_to_a_given_ancestor_as_a_cycle() {
         init_logger();
+
+        // Arrange
         let tree = sample_tree();
         let root_identity = identity_of_path(tree.path());
         let b_identity = identity_of_path(&tree.path().join("a/b"));
 
+        // Act
         // 対象 `a` の祖先の一覧（ルート）に、対象の子孫 `a/b` の dev/ino を意図的に入れる。
         // bind マウントで `a/b/loop` が `a` を指す場合の、`a` 側の見え方と同じ
-        let (ok, result) = success(walk_with_ancestors(
-            tree.path(),
-            "a",
-            &[root_identity, b_identity],
-        ));
+        let walk_result = walk_with_ancestors(tree.path(), "a", &[root_identity, b_identity]);
+
+        // Assert
+        let (ok, result) = success(walk_result);
         let a = &ok.node;
         let b = a.child(std::ffi::OsStr::new("b")).unwrap();
         assert!(b.errors().cycle_detected);
@@ -1594,8 +1750,12 @@ mod tests {
             1
         );
 
+        // Act
         // 祖先の一覧が空なら（フルスキャンの対象がルートのとき以外は誤りだが）、循環にならない
-        let (ok, result) = success(walk_with_ancestors(tree.path(), "a", &[]));
+        let walk_result = walk_with_ancestors(tree.path(), "a", &[]);
+
+        // Assert
+        let (ok, result) = success(walk_result);
         assert_eq!(ok.node.total_size(), 90);
         assert!(ok.node.is_complete());
         assert_eq!(result.errors.total(), 0);
@@ -1604,20 +1764,27 @@ mod tests {
     #[test]
     fn partial_walk_target_equal_to_an_ancestor_is_a_cycle() {
         init_logger();
+
+        // Arrange
         let tree = sample_tree();
         let root_identity = identity_of_path(tree.path());
         let a_identity = identity_of_path(&tree.path().join("a"));
+
+        // Act
         // 対象 `a/b` の祖先（ルート・`a`）に `a/b` 自身は含まれないので循環ではない
-        let (ok, _) = success(walk_with_ancestors(
-            tree.path(),
-            "a/b",
-            &[root_identity, a_identity],
-        ));
+        let walk_result = walk_with_ancestors(tree.path(), "a/b", &[root_identity, a_identity]);
+
+        // Assert
+        let (ok, _) = success(walk_result);
         assert_eq!(ok.node.total_size(), 40);
         assert!(ok.node.is_complete());
 
+        // Act
         // 対象 `a` 自身の dev/ino が祖先にあれば、対象が循環のノードになる
-        let (ok, result) = success(walk_with_ancestors(tree.path(), "a", &[a_identity]));
+        let walk_result = walk_with_ancestors(tree.path(), "a", &[a_identity]);
+
+        // Assert
+        let (ok, result) = success(walk_result);
         assert!(ok.node.errors().cycle_detected);
         assert_eq!(ok.node.name(), std::ffi::OsStr::new("a"));
         assert_eq!(ok.node.total_size(), 0);
@@ -1632,17 +1799,24 @@ mod tests {
     #[test]
     fn partial_walk_uses_only_the_leading_ancestors_after_retrying_with_the_parent() {
         init_logger();
+
+        // Arrange
         let tree = sample_tree();
         let root_identity = identity_of_path(tree.path());
         let a_identity = identity_of_path(&tree.path().join("a"));
         let b_identity = identity_of_path(&tree.path().join("a/b"));
+
+        // Act
         // 対象 `a/b/gone` は無く、`a/b` に遡る。最初の対象の祖先は [ルート, a, a/b] だが、
         // 遡った後の対象 `a/b` の祖先は [ルート, a] だけ。`a/b` 自身は循環にならない
-        let (ok, result) = success(walk_with_ancestors(
+        let walk_result = walk_with_ancestors(
             tree.path(),
             "a/b/gone",
             &[root_identity, a_identity, b_identity],
-        ));
+        );
+
+        // Assert
+        let (ok, result) = success(walk_result);
         assert_eq!(result.effective_path, std::path::Path::new("a/b"));
         assert_eq!(result.parent_retries.len(), 1);
         assert!(!ok.node.errors().cycle_detected);
@@ -1654,8 +1828,12 @@ mod tests {
             0
         );
 
+        // Act
         // ルートまで遡ったときは、祖先の一覧は空として扱う
-        let (ok, result) = success(walk_with_ancestors(tree.path(), "gone", &[root_identity]));
+        let walk_result = walk_with_ancestors(tree.path(), "gone", &[root_identity]);
+
+        // Assert
+        let (ok, result) = success(walk_result);
         assert!(result.effective_path.as_os_str().is_empty());
         assert!(!ok.node.errors().cycle_detected);
         assert_eq!(ok.node.total_size(), 100);
@@ -1664,6 +1842,8 @@ mod tests {
     #[test]
     fn unknown_entry_type_is_looked_up_with_statx() {
         init_logger();
+
+        // Arrange
         let tree = tempfile::tempdir().unwrap();
         make_file(tree.path(), "file", 1);
         make_dir(tree.path(), "dir");
@@ -1678,27 +1858,21 @@ mod tests {
         .unwrap();
         let dir_fd = open_dir(tree.path());
         let borrowed = rustix::fd::AsFd::as_fd(&dir_fd);
-        assert_eq!(
-            lookup_entry_class(borrowed, std::ffi::OsStr::new("file")),
-            Ok(EntryClass::File)
-        );
-        assert_eq!(
-            lookup_entry_class(borrowed, std::ffi::OsStr::new("dir")),
-            Ok(EntryClass::Directory)
-        );
+
+        // Act
+        let file_class = lookup_entry_class(borrowed, std::ffi::OsStr::new("file"));
+        let dir_class = lookup_entry_class(borrowed, std::ffi::OsStr::new("dir"));
+        let link_class = lookup_entry_class(borrowed, std::ffi::OsStr::new("link"));
+        let fifo_class = lookup_entry_class(borrowed, std::ffi::OsStr::new("fifo"));
+        let missing_class = lookup_entry_class(borrowed, std::ffi::OsStr::new("missing"));
+
+        // Assert
+        assert_eq!(file_class, Ok(EntryClass::File));
+        assert_eq!(dir_class, Ok(EntryClass::Directory));
         // リンクは辿らない（リンク自身はファイルとして数える）
-        assert_eq!(
-            lookup_entry_class(borrowed, std::ffi::OsStr::new("link")),
-            Ok(EntryClass::File)
-        );
-        assert_eq!(
-            lookup_entry_class(borrowed, std::ffi::OsStr::new("fifo")),
-            Ok(EntryClass::Skip)
-        );
-        assert_eq!(
-            lookup_entry_class(borrowed, std::ffi::OsStr::new("missing")),
-            Err(libc::ENOENT)
-        );
+        assert_eq!(link_class, Ok(EntryClass::File));
+        assert_eq!(fifo_class, Ok(EntryClass::Skip));
+        assert_eq!(missing_class, Err(libc::ENOENT));
     }
 
     /// `settle_unknown_entry` に失敗結果を注入して、戻り値・ノードのエラー・エラー件数を返す。
@@ -1735,13 +1909,17 @@ mod tests {
     #[test]
     fn unknown_entry_that_vanished_is_a_benign_race() {
         init_logger();
+
+        // Act
         let (class, node, counts) = settle_with(Err(libc::ENOENT));
+
+        // Assert
         assert_eq!(class, None);
         // ノードにエラーを付けず、スキャンを「エラーあり」にもしない
         assert!(node.is_complete());
         assert!(!node.errors().has_error());
         assert_eq!(counts.total_excluding_races(), 0);
-        // 件数には、ファイルの stat の ENOENT と同じ種類で数える
+        // 件数にはファイルの stat の ENOENT と同じ種類で数える
         assert_eq!(
             counts.count(crate::dir_scan::report::ScanErrorKind::StatFileNotFound),
             1
@@ -1755,8 +1933,21 @@ mod tests {
     #[test]
     fn unknown_entry_stat_failure_marks_the_directory_incomplete() {
         init_logger();
-        for errno in [libc::EACCES, libc::EIO, libc::EOVERFLOW] {
-            let (class, node, counts) = settle_with(Err(errno));
+
+        // Arrange
+        let errnos = [libc::EACCES, libc::EIO, libc::EOVERFLOW];
+
+        // Act
+        let settled: Vec<_> = errnos
+            .iter()
+            .map(|&errno| (errno, settle_with(Err(errno))))
+            .collect();
+        let (_, eacces_node, _) = settle_with(Err(libc::EACCES));
+        let (_, eio_node, _) = settle_with(Err(libc::EIO));
+        let (_, eoverflow_node, _) = settle_with(Err(libc::EOVERFLOW));
+
+        // Assert
+        for (errno, (class, node, counts)) in settled {
             assert_eq!(class, None, "errno={errno}");
             assert!(!node.is_complete(), "errno={errno}");
             assert!(node.errors().has_error(), "errno={errno}");
@@ -1767,20 +1958,27 @@ mod tests {
             );
             assert_eq!(counts.total_excluding_races(), 1);
         }
-        let (_, node, _) = settle_with(Err(libc::EACCES));
-        assert_eq!(node.errors().stat_eacces, 1);
-        let (_, node, _) = settle_with(Err(libc::EIO));
-        assert_eq!(node.errors().stat_eio, 1);
-        let (_, node, _) = settle_with(Err(libc::EOVERFLOW));
-        assert_eq!(node.errors().stat_other, 1);
+        assert_eq!(eacces_node.errors().stat_eacces, 1);
+        assert_eq!(eio_node.errors().stat_eio, 1);
+        assert_eq!(eoverflow_node.errors().stat_other, 1);
     }
 
     #[test]
     fn unknown_entry_that_was_stat_ed_keeps_its_class() {
         init_logger();
-        for class in [EntryClass::File, EntryClass::Directory, EntryClass::Skip] {
-            let (settled, node, counts) = settle_with(Ok(class));
-            assert_eq!(settled, Some(class));
+
+        // Arrange
+        let classes = [EntryClass::File, EntryClass::Directory, EntryClass::Skip];
+
+        // Act
+        let settled: Vec<_> = classes
+            .iter()
+            .map(|&class| (class, settle_with(Ok(class))))
+            .collect();
+
+        // Assert
+        for (class, (settled_class, node, counts)) in settled {
+            assert_eq!(settled_class, Some(class));
             assert!(node.is_complete());
             assert_eq!(counts.total(), 0);
         }
@@ -1789,60 +1987,60 @@ mod tests {
     #[test]
     fn classify_maps_every_file_type() {
         init_logger();
-        assert_eq!(
-            classify(rustix::fs::FileType::RegularFile),
-            EntryClass::File
-        );
-        assert_eq!(classify(rustix::fs::FileType::Symlink), EntryClass::File);
-        assert_eq!(
-            classify(rustix::fs::FileType::Directory),
-            EntryClass::Directory
-        );
-        assert_eq!(classify(rustix::fs::FileType::Fifo), EntryClass::Skip);
-        assert_eq!(classify(rustix::fs::FileType::Socket), EntryClass::Skip);
-        assert_eq!(
-            classify(rustix::fs::FileType::CharacterDevice),
-            EntryClass::Skip
-        );
-        assert_eq!(
-            classify(rustix::fs::FileType::BlockDevice),
-            EntryClass::Skip
-        );
-        assert_eq!(classify(rustix::fs::FileType::Unknown), EntryClass::Unknown);
+
+        // Act
+        let regular = classify(rustix::fs::FileType::RegularFile);
+        let symlink = classify(rustix::fs::FileType::Symlink);
+        let directory = classify(rustix::fs::FileType::Directory);
+        let fifo = classify(rustix::fs::FileType::Fifo);
+        let socket = classify(rustix::fs::FileType::Socket);
+        let character_device = classify(rustix::fs::FileType::CharacterDevice);
+        let block_device = classify(rustix::fs::FileType::BlockDevice);
+        let unknown = classify(rustix::fs::FileType::Unknown);
+
+        // Assert
+        assert_eq!(regular, EntryClass::File);
+        assert_eq!(symlink, EntryClass::File);
+        assert_eq!(directory, EntryClass::Directory);
+        assert_eq!(fifo, EntryClass::Skip);
+        assert_eq!(socket, EntryClass::Skip);
+        assert_eq!(character_device, EntryClass::Skip);
+        assert_eq!(block_device, EntryClass::Skip);
+        assert_eq!(unknown, EntryClass::Unknown);
     }
 
     #[test]
     fn open_relative_dir_opens_one_component_at_a_time_without_following_links() {
         init_logger();
+
+        // Arrange
         let tree = sample_tree();
         std::os::unix::fs::symlink("a", tree.path().join("link_to_a")).unwrap();
         let root_fd = open_dir(tree.path());
         let borrowed = rustix::fd::AsFd::as_fd(&root_fd);
+
+        // Act
         let b = open_relative_dir(borrowed, std::path::Path::new("a/b")).unwrap();
+        let root_again = open_relative_dir(borrowed, std::path::Path::new("")).unwrap();
+        let missing = open_relative_dir(borrowed, std::path::Path::new("missing/x")).err();
+        let through_link = open_relative_dir(borrowed, std::path::Path::new("link_to_a/b")).err();
+        let last_link = open_relative_dir(borrowed, std::path::Path::new("link_to_a")).err();
+        let file = open_relative_dir(borrowed, std::path::Path::new("f1")).err();
+        let parent_dir = open_relative_dir(borrowed, std::path::Path::new("../x")).err();
+
+        // Assert
         assert_eq!(
             dev_ino_of(&b),
             dev_ino_of(&open_dir(&tree.path().join("a/b")))
         );
-        let root_again = open_relative_dir(borrowed, std::path::Path::new("")).unwrap();
         assert_eq!(dev_ino_of(&root_again), dev_ino_of(&root_fd));
-        assert_eq!(
-            open_relative_dir(borrowed, std::path::Path::new("missing/x")).err(),
-            Some(libc::ENOENT)
-        );
+        assert_eq!(missing, Some(libc::ENOENT));
         // 途中の段のリンクも、最後の段のリンクも辿らない
-        let through_link = open_relative_dir(borrowed, std::path::Path::new("link_to_a/b")).err();
         assert!(matches!(through_link, Some(e) if e == libc::ENOTDIR || e == libc::ELOOP));
-        let last_link = open_relative_dir(borrowed, std::path::Path::new("link_to_a")).err();
         assert!(matches!(last_link, Some(e) if e == libc::ENOTDIR || e == libc::ELOOP));
         // ファイルは開けない
-        assert_eq!(
-            open_relative_dir(borrowed, std::path::Path::new("f1")).err(),
-            Some(libc::ENOTDIR)
-        );
-        assert_eq!(
-            open_relative_dir(borrowed, std::path::Path::new("../x")).err(),
-            Some(libc::EINVAL)
-        );
+        assert_eq!(file, Some(libc::ENOTDIR));
+        assert_eq!(parent_dir, Some(libc::EINVAL));
     }
 
     fn wide_tree() -> tempfile::TempDir {
@@ -1867,20 +2065,32 @@ mod tests {
     #[test]
     fn result_does_not_depend_on_parallelism() {
         init_logger();
+
+        // Arrange
         let tree = wide_tree();
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (base, base_result) =
-            success(full_walk(tree.path(), &settings(1, &["**/.*"]), &hasher));
+        let parallelisms = [4, 64];
+
+        // Act
+        let base_walk = full_walk(tree.path(), &settings(1, &["**/.*"]), &hasher);
+        let other_walks: Vec<_> = parallelisms
+            .iter()
+            .map(|&parallelism| {
+                (
+                    parallelism,
+                    full_walk(tree.path(), &settings(parallelism, &["**/.*"]), &hasher),
+                )
+            })
+            .collect();
+
+        // Assert
+        let (base, base_result) = success(base_walk);
         assert_eq!(base_result.worker_ioprio.len(), 1);
         // 12 + 12*4 + 12 + root
         assert_eq!(base.counts.dir_count, 1 + 12 + 48 + 12);
         assert_eq!(base.counts.file_count, 12 * 4 * 5 + 12);
-        for parallelism in [4, 64] {
-            let (other, result) = success(full_walk(
-                tree.path(),
-                &settings(parallelism, &["**/.*"]),
-                &hasher,
-            ));
+        for (parallelism, other_walk) in other_walks {
+            let (other, result) = success(other_walk);
             assert_eq!(other.node, base.node, "parallelism={parallelism}");
             assert_eq!(other.counts, base.counts);
             assert_eq!(result.worker_ioprio.len(), parallelism);
@@ -1890,9 +2100,15 @@ mod tests {
     #[test]
     fn result_reports_ioprio_and_error_counts() {
         init_logger();
+
+        // Arrange
         let tree = sample_tree();
         let hasher = crate::dir_scan::tree::NameHasher::new();
+
+        // Act
         let result = full_walk(tree.path(), &settings(3, &[]), &hasher);
+
+        // Assert
         assert_eq!(result.worker_ioprio.len(), 3);
         let indices: Vec<usize> = result
             .worker_ioprio
@@ -1915,12 +2131,19 @@ mod tests {
     #[test]
     fn hash_collisions_are_counted() {
         init_logger();
+
+        // Arrange
         let tree = tempfile::tempdir().unwrap();
         make_file(tree.path(), "one", 1);
         make_file(tree.path(), "two", 2);
         make_file(tree.path(), "three", 4);
         let hasher = crate::dir_scan::tree::NameHasher::with_test_mapping(|_| 7);
-        let (ok, _) = success(full_walk(tree.path(), &settings(1, &[]), &hasher));
+
+        // Act
+        let walk_result = full_walk(tree.path(), &settings(1, &[]), &hasher);
+
+        // Assert
+        let (ok, _) = success(walk_result);
         assert_eq!(ok.node.own_size(), 7);
         assert_eq!(ok.counts.file_count, 3);
         assert_eq!(ok.counts.hash_collision_count, 2);
@@ -1929,10 +2152,16 @@ mod tests {
     #[test]
     fn panic_during_walk_is_returned_as_failure_and_thread_continues() {
         init_logger();
+
+        // Arrange
         let tree = sample_tree();
         make_file(tree.path(), &format!("a/{TEST_PANIC_DIR_NAME}/f"), 1);
         let hasher = crate::dir_scan::tree::NameHasher::new();
+
+        // Act
         let result = full_walk(tree.path(), &settings(4, &[]), &hasher);
+
+        // Assert
         match failure(&result) {
             WalkFailure::Panicked(message) => {
                 assert!(message.contains("injected panic"), "{message}");
@@ -1949,26 +2178,41 @@ mod tests {
         assert_eq!(result.worker_ioprio.len(), 4);
         assert!(failure(&result).to_string().contains("injected panic"));
 
+        // Arrange
         // 呼び出したスレッドは続行でき、次のスキャンも実行できる
         std::fs::remove_dir_all(tree.path().join(format!("a/{TEST_PANIC_DIR_NAME}"))).unwrap();
-        let (ok, _) = success(full_walk(tree.path(), &settings(4, &[]), &hasher));
+
+        // Act
+        let next_walk = full_walk(tree.path(), &settings(4, &[]), &hasher);
+
+        // Assert
+        let (ok, _) = success(next_walk);
         assert_eq!(ok.node.total_size(), 100);
     }
 
     #[test]
     fn pool_build_failure_is_a_failure_variant() {
         init_logger();
+
+        // Arrange
         // プールを作れない状況は作りにくいので、表示だけ確認する
         let failure = WalkFailure::PoolBuildFailed("boom".to_string());
-        assert!(failure.to_string().contains("boom"));
-        assert!(WalkFailure::Internal("x".to_string())
-            .to_string()
-            .contains("internal"));
+        let internal = WalkFailure::Internal("x".to_string());
+
+        // Act
+        let failure_message = failure.to_string();
+        let internal_message = internal.to_string();
+
+        // Assert
+        assert!(failure_message.contains("boom"));
+        assert!(internal_message.contains("internal"));
     }
 
     #[test]
     fn deep_tree_is_walked_with_bounded_descriptors() {
         init_logger();
+
+        // Arrange
         let tree = tempfile::tempdir().unwrap();
         let mut relative = String::new();
         for level in 0..60 {
@@ -1976,7 +2220,12 @@ mod tests {
         }
         make_file(tree.path(), &format!("{relative}leaf"), 3);
         let hasher = crate::dir_scan::tree::NameHasher::new();
-        let (ok, _) = success(full_walk(tree.path(), &settings(2, &[]), &hasher));
+
+        // Act
+        let walk_result = full_walk(tree.path(), &settings(2, &[]), &hasher);
+
+        // Assert
+        let (ok, _) = success(walk_result);
         assert_eq!(ok.node.total_size(), 3);
         assert_eq!(ok.counts.dir_count, 61);
     }
