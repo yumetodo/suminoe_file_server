@@ -518,14 +518,25 @@ mod tests {
     #[test]
     fn partial_path_rejects_absolute() {
         init_logger();
-        assert!(ScanTarget::partial(std::path::Path::new("/a")).is_err());
-        assert!(ScanTarget::partial(std::path::Path::new("/")).is_err());
+
+        // Act
+        let absolute = ScanTarget::partial(std::path::Path::new("/a"));
+        let root = ScanTarget::partial(std::path::Path::new("/"));
+
+        // Assert
+        assert!(absolute.is_err());
+        assert!(root.is_err());
     }
 
     #[test]
     fn partial_path_rejects_parent_dir() {
         init_logger();
-        for path in ["..", "../a", "a/..", "a/../b", "a/b/../.."] {
+
+        // Arrange
+        let paths = ["..", "../a", "a/..", "a/../b", "a/b/../.."];
+
+        // Act & Assert
+        for path in paths {
             assert!(
                 ScanTarget::partial(std::path::Path::new(path)).is_err(),
                 "{path}"
@@ -536,7 +547,12 @@ mod tests {
     #[test]
     fn partial_path_rejects_empty() {
         init_logger();
-        for path in ["", ".", "./", "./."] {
+
+        // Arrange
+        let paths = ["", ".", "./", "./."];
+
+        // Act & Assert
+        for path in paths {
             assert!(
                 ScanTarget::partial(std::path::Path::new(path)).is_err(),
                 "{path:?}"
@@ -547,7 +563,12 @@ mod tests {
     #[test]
     fn partial_path_normalizes_cur_dir_and_slashes() {
         init_logger();
-        for path in ["a/b", "./a/b", "a//b", "a/./b", "a/b/", "./a//b/./"] {
+
+        // Arrange
+        let paths = ["a/b", "./a/b", "a//b", "a/./b", "a/b/", "./a//b/./"];
+
+        // Act & Assert
+        for path in paths {
             assert_eq!(partial(path), partial("a/b"), "{path}");
             assert_eq!(
                 partial(path).path(),
@@ -560,20 +581,29 @@ mod tests {
     #[test]
     fn partial_path_keeps_non_utf8_names() {
         init_logger();
+
+        // Arrange
         let name = <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"a\xffb");
         let path = std::path::Path::new("dir").join(name);
+
+        // Act
         let target = ScanTarget::partial(&path).unwrap();
+
+        // Assert
         assert_eq!(target.path(), Some(path.as_path()));
     }
 
     #[test]
     fn partial_path_does_not_strip_dot_prefixed_names() {
         init_logger();
-        assert_eq!(
-            partial(".cache/x").path(),
-            Some(std::path::Path::new(".cache/x"))
-        );
-        assert!(ScanTarget::partial(std::path::Path::new("...")).is_ok());
+
+        // Act
+        let hidden_dir = partial(".cache/x");
+        let dots = ScanTarget::partial(std::path::Path::new("..."));
+
+        // Assert
+        assert_eq!(hidden_dir.path(), Some(std::path::Path::new(".cache/x")));
+        assert!(dots.is_ok());
     }
 
     // ---- 包含関係 ----
@@ -581,33 +611,56 @@ mod tests {
     #[test]
     fn contains_follows_design() {
         init_logger();
+
+        // Arrange
         let full = ScanTarget::full();
-        assert!(full.contains(&full));
-        assert!(full.contains(&partial("a")));
-        assert!(!partial("a").contains(&full));
-        assert!(partial("a").contains(&partial("a")));
-        assert!(partial("a").contains(&partial("a/b")));
-        assert!(partial("a").contains(&partial("a/b/c")));
-        assert!(!partial("a/b").contains(&partial("a")));
-        assert!(!partial("a").contains(&partial("ab")));
-        assert!(!partial("ab").contains(&partial("a")));
-        assert!(!partial("a").contains(&partial("b/a")));
+
+        // Act
+        let full_in_full = full.contains(&full);
+        let partial_in_full = full.contains(&partial("a"));
+        let full_in_partial = partial("a").contains(&full);
+        let same_partial = partial("a").contains(&partial("a"));
+        let child_in_parent = partial("a").contains(&partial("a/b"));
+        let grandchild_in_parent = partial("a").contains(&partial("a/b/c"));
+        let parent_in_child = partial("a/b").contains(&partial("a"));
+        let longer_sibling_name = partial("a").contains(&partial("ab"));
+        let shorter_sibling_name = partial("ab").contains(&partial("a"));
+        let same_name_elsewhere = partial("a").contains(&partial("b/a"));
+
+        // Assert
+        assert!(full_in_full);
+        assert!(partial_in_full);
+        assert!(!full_in_partial);
+        assert!(same_partial);
+        assert!(child_in_parent);
+        assert!(grandchild_in_parent);
+        assert!(!parent_in_child);
+        assert!(!longer_sibling_name);
+        assert!(!shorter_sibling_name);
+        assert!(!same_name_elsewhere);
     }
 
     #[test]
     fn scan_target_kind_and_display() {
         init_logger();
-        assert_eq!(
-            ScanTarget::full().kind(),
-            crate::dir_scan::report::ScanKind::Full
-        );
-        assert_eq!(
-            partial("a").kind(),
-            crate::dir_scan::report::ScanKind::Partial
-        );
-        assert_eq!(ScanTarget::full().path(), None);
-        assert_eq!(ScanTarget::full().to_string(), "full");
-        assert_eq!(partial("a/b").to_string(), "partial(a/b)");
+
+        // Arrange
+        let full = ScanTarget::full();
+        let partial_target = partial("a/b");
+
+        // Act
+        let full_kind = full.kind();
+        let partial_kind = partial_target.kind();
+        let full_path = full.path();
+        let full_display = full.to_string();
+        let partial_display = partial_target.to_string();
+
+        // Assert
+        assert_eq!(full_kind, crate::dir_scan::report::ScanKind::Full);
+        assert_eq!(partial_kind, crate::dir_scan::report::ScanKind::Partial);
+        assert_eq!(full_path, None);
+        assert_eq!(full_display, "full");
+        assert_eq!(partial_display, "partial(a/b)");
     }
 
     // ---- 統合規則（設計書 6.3 の例） ----
@@ -615,33 +668,47 @@ mod tests {
     #[test]
     fn design_example_a_b_c_d() {
         init_logger();
+
+        // Arrange
         let x = settings_with(4, &[]);
         let y = settings_with(2, &[]);
         let mut queue = ScanQueue::new();
 
+        // Act
         // A: X, 部分 a/b
         let (_ticket_a, outcome_a) = push(&mut queue, 1, &x, partial("a/b"));
+
+        // Assert
         assert_eq!(outcome_a, PushOutcome::Appended);
         assert_eq!(queue_shape(&queue), vec![(partial("a/b"), vec![1])]);
 
+        // Act
         // B: Y, 部分 z
         let (_ticket_b, outcome_b) = push(&mut queue, 2, &y, partial("z"));
+
+        // Assert
         assert_eq!(outcome_b, PushOutcome::Appended);
         assert_eq!(
             queue_shape(&queue),
             vec![(partial("a/b"), vec![1]), (partial("z"), vec![2])]
         );
 
+        // Act
         // C: X, 部分 a（A を含む）-> A の位置に、待ち手 A・C
         let (_ticket_c, outcome_c) = push(&mut queue, 3, &x, partial("a"));
+
+        // Assert
         assert_eq!(outcome_c, PushOutcome::Absorbed { count: 1 });
         assert_eq!(
             queue_shape(&queue),
             vec![(partial("a"), vec![1, 3]), (partial("z"), vec![2])]
         );
 
+        // Act
         // D: X, フル（C を含む）-> C の位置に、待ち手 A・C・D
         let (_ticket_d, outcome_d) = push(&mut queue, 4, &x, ScanTarget::full());
+
+        // Assert
         assert_eq!(outcome_d, PushOutcome::Absorbed { count: 1 });
         assert_eq!(
             queue_shape(&queue),
@@ -655,12 +722,22 @@ mod tests {
     #[test]
     fn contained_request_merges_into_existing_item() {
         init_logger();
+
+        // Arrange
         let x = settings_with(4, &[]);
         let mut queue = ScanQueue::new();
         let (_t1, _) = push(&mut queue, 1, &x, partial("a"));
+
+        // Act
         let (_t2, outcome) = push(&mut queue, 2, &x, partial("a/b"));
+
+        // Assert
         assert_eq!(outcome, PushOutcome::MergedIntoExisting);
+
+        // Act
         let (_t3, outcome) = push(&mut queue, 3, &x, partial("a"));
+
+        // Assert
         assert_eq!(outcome, PushOutcome::MergedIntoExisting);
         assert_eq!(queue_shape(&queue), vec![(partial("a"), vec![1, 2, 3])]);
         assert_eq!(queue.iter().next().unwrap().representative_request_id, 1);
@@ -669,10 +746,16 @@ mod tests {
     #[test]
     fn sibling_prefix_names_are_not_merged() {
         init_logger();
+
+        // Arrange
         let x = settings_with(4, &[]);
         let mut queue = ScanQueue::new();
         let (_t1, _) = push(&mut queue, 1, &x, partial("a"));
+
+        // Act
         let (_t2, outcome) = push(&mut queue, 2, &x, partial("ab"));
+
+        // Assert
         assert_eq!(outcome, PushOutcome::Appended);
         assert_eq!(queue.len(), 2);
     }
@@ -680,15 +763,21 @@ mod tests {
     #[test]
     fn full_absorbs_many_items_and_takes_oldest_position() {
         init_logger();
+
+        // Arrange
         let x = settings_with(4, &[]);
         let y = settings_with(2, &[]);
         let mut queue = ScanQueue::new();
+
+        // Act
         let (_t1, _) = push(&mut queue, 1, &y, partial("p"));
         let (_t2, _) = push(&mut queue, 2, &x, partial("a"));
         let (_t3, _) = push(&mut queue, 3, &x, partial("b"));
         let (_t4, _) = push(&mut queue, 4, &y, partial("q"));
         let (_t5, _) = push(&mut queue, 5, &x, partial("c/d"));
         let (_t6, _) = push(&mut queue, 6, &x, partial("b/x"));
+
+        // Assert
         assert_eq!(
             queue_shape(&queue),
             vec![
@@ -700,7 +789,10 @@ mod tests {
             ]
         );
 
+        // Act
         let (_t7, outcome) = push(&mut queue, 7, &x, ScanTarget::full());
+
+        // Assert
         assert_eq!(outcome, PushOutcome::Absorbed { count: 3 });
         assert_eq!(
             queue_shape(&queue),
@@ -715,13 +807,19 @@ mod tests {
     #[test]
     fn partial_absorbs_only_descendants_with_same_settings() {
         init_logger();
+
+        // Arrange
         let x = settings_with(4, &[]);
         let y = settings_with(4, &["**/.*"]);
         let mut queue = ScanQueue::new();
         let (_t1, _) = push(&mut queue, 1, &x, partial("a/b"));
         let (_t2, _) = push(&mut queue, 2, &y, partial("a/c"));
         let (_t3, _) = push(&mut queue, 3, &x, partial("a/d"));
+
+        // Act
         let (_t4, outcome) = push(&mut queue, 4, &x, partial("a"));
+
+        // Assert
         assert_eq!(outcome, PushOutcome::Absorbed { count: 2 });
         assert_eq!(
             queue_shape(&queue),
@@ -732,6 +830,8 @@ mod tests {
     #[test]
     fn settings_differing_only_in_io_priority_or_excludes_are_not_merged() {
         init_logger();
+
+        // Arrange
         let base = settings_with(4, &["**/.*"]);
         let other_exclude = settings_with(4, &["**/*.tmp"]);
         let other_io = crate::dir_scan::settings::ScanSettings::new(
@@ -741,8 +841,12 @@ mod tests {
         );
         let mut queue = ScanQueue::new();
         let (_t1, _) = push(&mut queue, 1, &base, ScanTarget::full());
+
+        // Act
         let (_t2, o2) = push(&mut queue, 2, &other_exclude, partial("a"));
         let (_t3, o3) = push(&mut queue, 3, &other_io, partial("a"));
+
+        // Assert
         assert_eq!(o2, PushOutcome::Appended);
         assert_eq!(o3, PushOutcome::Appended);
         assert_eq!(queue.len(), 3);
@@ -751,23 +855,39 @@ mod tests {
     #[test]
     fn exclude_patterns_in_different_order_are_the_same_settings() {
         init_logger();
+
+        // Arrange
         let first = settings_with(4, &["b", "a", "a"]);
         let second = settings_with(4, &["a", "b"]);
         let mut queue = ScanQueue::new();
         let (_t1, _) = push(&mut queue, 1, &first, partial("x"));
+
+        // Act
         let (_t2, outcome) = push(&mut queue, 2, &second, partial("x/y"));
+
+        // Assert
         assert_eq!(outcome, PushOutcome::MergedIntoExisting);
     }
 
     #[test]
     fn popped_item_is_not_merged_into() {
         init_logger();
+
+        // Arrange
         let x = settings_with(4, &[]);
         let mut queue = ScanQueue::new();
         let (_t1, _) = push(&mut queue, 1, &x, partial("a"));
+
+        // Act
         let running = queue.pop_front().unwrap();
+
+        // Assert
         assert!(queue.is_empty());
+
+        // Act
         let (_t2, outcome) = push(&mut queue, 2, &x, partial("a"));
+
+        // Assert
         assert_eq!(outcome, PushOutcome::Appended);
         assert_eq!(running.request_ids(), vec![1]);
         assert_eq!(queue_shape(&queue), vec![(partial("a"), vec![2])]);
@@ -778,21 +898,27 @@ mod tests {
     #[test]
     fn merged_waiters_all_receive_the_same_execution() {
         init_logger();
+
+        // Arrange
         let x = settings_with(4, &[]);
         let mut queue = ScanQueue::new();
         let (ticket_a, _) = push(&mut queue, 1, &x, partial("a/b"));
         let (ticket_c, _) = push(&mut queue, 3, &x, partial("a"));
         let (ticket_d, _) = push(&mut queue, 4, &x, ScanTarget::full());
-
         let item = queue.pop_front().unwrap();
         let report = sample_report(
             9,
             item.request_ids(),
             crate::dir_scan::report::ScanOutcome::Success,
         );
-        item.notify_executed(&ScanTarget::full(), &report);
 
+        // Act
+        item.notify_executed(&ScanTarget::full(), &report);
         let completion_a = ticket_a.wait().unwrap();
+        let completion_c = ticket_c.wait().unwrap();
+        let completion_d = ticket_d.wait().unwrap();
+
+        // Assert
         assert_eq!(completion_a.request_id, 1);
         assert_eq!(
             completion_a.disposition,
@@ -806,14 +932,12 @@ mod tests {
             &report
         ));
 
-        let completion_c = ticket_c.wait().unwrap();
         assert_eq!(
             completion_c.disposition,
             Disposition::Merged { into_request_id: 4 }
         );
         assert_eq!(completion_c.requested, partial("a"));
 
-        let completion_d = ticket_d.wait().unwrap();
         assert_eq!(completion_d.disposition, Disposition::Executed);
         assert_eq!(completion_d.requested, ScanTarget::full());
         assert_eq!(completion_d.executed, Some(ScanTarget::full()));
@@ -822,31 +946,38 @@ mod tests {
     #[test]
     fn upgrade_and_merge_are_reported_separately() {
         init_logger();
+
+        // Arrange
         let x = settings_with(4, &[]);
         let mut queue = ScanQueue::new();
         let (ticket_a, _) = push(&mut queue, 1, &x, partial("a/b"));
         let (ticket_c, _) = push(&mut queue, 2, &x, partial("a"));
-
         let item = queue.pop_front().unwrap();
-        // 部分スキャン a に格上げされてフルスキャンが走った
-        let executed = effective_target(&item.target, &item.settings, None);
-        assert_eq!(executed, ScanTarget::full());
         let report = sample_report(
             1,
             item.request_ids(),
             crate::dir_scan::report::ScanOutcome::SuccessWithErrors,
         );
-        item.notify_executed(&executed, &report);
 
+        // Act
+        let executed = effective_target(&item.target, &item.settings, None);
+
+        // Assert
+        // 部分スキャン a に格上げされてフルスキャンが走った
+        assert_eq!(executed, ScanTarget::full());
+
+        // Act
+        item.notify_executed(&executed, &report);
         let completion_a = ticket_a.wait().unwrap();
+        let completion_c = ticket_c.wait().unwrap();
+
+        // Assert
         assert_eq!(
             completion_a.disposition,
             Disposition::Merged { into_request_id: 2 }
         );
         assert_eq!(completion_a.requested, partial("a/b"));
         assert_eq!(completion_a.executed, Some(ScanTarget::full()));
-
-        let completion_c = ticket_c.wait().unwrap();
         assert_eq!(completion_c.disposition, Disposition::Executed);
         assert_eq!(completion_c.requested, partial("a"));
         assert_eq!(completion_c.executed, Some(ScanTarget::full()));
@@ -855,6 +986,8 @@ mod tests {
     #[test]
     fn failed_report_makes_every_waiter_failed() {
         init_logger();
+
+        // Arrange
         let x = settings_with(4, &[]);
         let mut queue = ScanQueue::new();
         let (ticket_a, _) = push(&mut queue, 1, &x, partial("a/b"));
@@ -865,7 +998,11 @@ mod tests {
             item.request_ids(),
             crate::dir_scan::report::ScanOutcome::Failed("boom".to_string()),
         );
+
+        // Act
         item.notify_executed(&partial("a"), &report);
+
+        // Assert
         for ticket in [ticket_a, ticket_c] {
             let completion = ticket.wait().unwrap();
             assert_eq!(completion.disposition, Disposition::Failed);
@@ -878,15 +1015,21 @@ mod tests {
     #[test]
     fn stopped_notifies_every_waiter_of_every_remaining_item() {
         init_logger();
+
+        // Arrange
         let x = settings_with(4, &[]);
         let y = settings_with(2, &[]);
         let mut queue = ScanQueue::new();
         let (t1, _) = push(&mut queue, 1, &x, partial("a/b"));
         let (t2, _) = push(&mut queue, 2, &y, partial("z"));
         let (t3, _) = push(&mut queue, 3, &x, partial("a"));
+
+        // Act
         for item in queue.drain_all() {
             item.notify_stopped();
         }
+
+        // Assert
         assert!(queue.is_empty());
         let expected = [
             (t1, 1, partial("a/b")),
@@ -907,27 +1050,41 @@ mod tests {
     #[test]
     fn wait_fails_when_waiter_is_dropped_without_completion() {
         init_logger();
+
+        // Arrange
         let (ticket, waiter) = Ticket::new(5, ScanTarget::full());
-        assert_eq!(ticket.request_id(), 5);
-        assert!(ticket
-            .wait_timeout(std::time::Duration::from_millis(1))
-            .unwrap()
-            .is_none());
+
+        // Act
+        let request_id = ticket.request_id();
+        let before_drop = ticket.wait_timeout(std::time::Duration::from_millis(1));
+
+        // Assert
+        assert_eq!(request_id, 5);
+        assert!(before_drop.unwrap().is_none());
+
+        // Act
         drop(waiter);
-        assert!(ticket
-            .wait_timeout(std::time::Duration::from_millis(1))
-            .is_err());
-        assert!(ticket.wait().is_err());
+        let timeout_after_drop = ticket.wait_timeout(std::time::Duration::from_millis(1));
+        let wait_after_drop = ticket.wait();
+
+        // Assert
+        assert!(timeout_after_drop.is_err());
+        assert!(wait_after_drop.is_err());
     }
 
     #[test]
     fn notify_does_not_fail_when_ticket_is_dropped() {
         init_logger();
+
+        // Arrange
         let x = settings_with(4, &[]);
         let mut queue = ScanQueue::new();
         let (ticket, _) = push(&mut queue, 1, &x, partial("a"));
         drop(ticket);
-        queue.pop_front().unwrap().notify_stopped();
+        let item = queue.pop_front().unwrap();
+
+        // Act
+        item.notify_stopped();
     }
 
     // ---- 格上げの判定 ----
@@ -935,54 +1092,71 @@ mod tests {
     #[test]
     fn upgrade_when_tree_is_unscanned() {
         init_logger();
+
+        // Arrange
         let x = settings_with(4, &["**/.*"]);
-        assert!(needs_full_upgrade(&x, None));
-        assert_eq!(
-            effective_target(&partial("a"), &x, None),
-            ScanTarget::full()
-        );
+
+        // Act
+        let needs_upgrade = needs_full_upgrade(&x, None);
+        let target = effective_target(&partial("a"), &x, None);
+
+        // Assert
+        assert!(needs_upgrade);
+        assert_eq!(target, ScanTarget::full());
     }
 
     #[test]
     fn upgrade_when_exclude_patterns_differ() {
         init_logger();
+
+        // Arrange
         let x = settings_with(4, &["**/.*"]);
         let tree_patterns = crate::dir_scan::settings::ExcludePatterns::new(&[]).unwrap();
-        assert!(needs_full_upgrade(&x, Some(&tree_patterns)));
-        assert_eq!(
-            effective_target(&partial("a"), &x, Some(&tree_patterns)),
-            ScanTarget::full()
-        );
+
+        // Act
+        let needs_upgrade = needs_full_upgrade(&x, Some(&tree_patterns));
+        let target = effective_target(&partial("a"), &x, Some(&tree_patterns));
+
+        // Assert
+        assert!(needs_upgrade);
+        assert_eq!(target, ScanTarget::full());
     }
 
     #[test]
     fn no_upgrade_when_exclude_patterns_match_regardless_of_other_settings() {
         init_logger();
+
+        // Arrange
         let tree_patterns =
             crate::dir_scan::settings::ExcludePatterns::new(&["b".to_string(), "a".to_string()])
                 .unwrap();
         // 並列度が違い、パターンの並び・重複が違っても、正規形が同じなら格上げしない
         let x = settings_with(8, &["a", "b", "a"]);
-        assert!(!needs_full_upgrade(&x, Some(&tree_patterns)));
-        assert_eq!(
-            effective_target(&partial("a"), &x, Some(&tree_patterns)),
-            partial("a")
-        );
+
+        // Act
+        let needs_upgrade = needs_full_upgrade(&x, Some(&tree_patterns));
+        let target = effective_target(&partial("a"), &x, Some(&tree_patterns));
+
+        // Assert
+        assert!(!needs_upgrade);
+        assert_eq!(target, partial("a"));
     }
 
     #[test]
     fn full_request_is_never_changed() {
         init_logger();
+
+        // Arrange
         let x = settings_with(4, &[]);
         let tree_patterns = crate::dir_scan::settings::ExcludePatterns::none();
-        assert_eq!(
-            effective_target(&ScanTarget::full(), &x, Some(&tree_patterns)),
-            ScanTarget::full()
-        );
-        assert_eq!(
-            effective_target(&ScanTarget::full(), &x, None),
-            ScanTarget::full()
-        );
+
+        // Act
+        let with_tree = effective_target(&ScanTarget::full(), &x, Some(&tree_patterns));
+        let without_tree = effective_target(&ScanTarget::full(), &x, None);
+
+        // Assert
+        assert_eq!(with_tree, ScanTarget::full());
+        assert_eq!(without_tree, ScanTarget::full());
     }
 
     // ---- プロパティテスト（設計書 10） ----
@@ -1014,13 +1188,19 @@ mod tests {
         #[test]
         fn merged_items_cover_requests_and_never_mix_settings(requests in arbitrary_requests()) {
             init_logger();
+
+            // Arrange
             let mut queue = ScanQueue::new();
             let mut tickets = Vec::new();
+
+            // Act
             for (id, (settings_index, target)) in requests.iter().enumerate() {
                 let (ticket, waiter) = Ticket::new(id as u64, target.clone());
                 queue.push(settings_by_index(*settings_index), waiter);
                 tickets.push(ticket);
             }
+
+            // Assert
             let mut seen = std::collections::BTreeSet::new();
             for item in queue.iter() {
                 for waiter in &item.waiters {
@@ -1030,7 +1210,7 @@ mod tests {
                     proptest::prop_assert_eq!(&waiter.requested, target);
                     proptest::prop_assert!(seen.insert(waiter.request_id));
                 }
-                // 代表の要求は、その要素の target そのもの
+                // 代表の要求はその要素の target そのもの
                 let representative = &requests[item.representative_request_id as usize].1;
                 proptest::prop_assert_eq!(representative, &item.target);
                 proptest::prop_assert!(item
@@ -1055,8 +1235,12 @@ mod tests {
         #[test]
         fn merged_item_takes_the_oldest_position(requests in arbitrary_requests()) {
             init_logger();
+
+            // Arrange
             let mut queue = ScanQueue::new();
             let mut tickets = Vec::new();
+
+            // Act & Assert
             for (id, (settings_index, target)) in requests.iter().enumerate() {
                 let settings = settings_by_index(*settings_index);
                 // 積む前の各要素の先頭の待ち手の request_id（位置の目印）
@@ -1129,6 +1313,8 @@ mod tests {
             executed_count in 0..8usize,
         ) {
             init_logger();
+
+            // Arrange
             let mut queue = ScanQueue::new();
             let mut tickets = Vec::new();
             for (id, (settings_index, target)) in requests.iter().enumerate() {
@@ -1136,6 +1322,8 @@ mod tests {
                 queue.push(settings_by_index(*settings_index), waiter);
                 tickets.push(ticket);
             }
+
+            // Act
             // 先頭から executed_count 個を実行し、残りは停止で通知する
             for execution_id in 0..executed_count as u64 {
                 let Some(item) = queue.pop_front() else { break };
@@ -1150,6 +1338,8 @@ mod tests {
             for item in queue.drain_all() {
                 item.notify_stopped();
             }
+
+            // Assert
             for ticket in tickets {
                 let request_id = ticket.request_id();
                 let completion = ticket.wait().unwrap();
