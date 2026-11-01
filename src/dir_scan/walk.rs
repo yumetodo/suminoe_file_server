@@ -173,7 +173,8 @@ pub fn run_walk(
         }
     };
     let worker_ioprio = pool.worker_results();
-    // ワーカーのスレッドを終了させてからエラー件数を読む
+    // `install` が戻った時点で走査は終わっており、I/O 優先度の記録も `build_pool` の中で
+    // 揃っている。`drop` はプールを手放すだけで、ワーカーのスレッドの終了は待たない。
     drop(pool);
     let duration = started.elapsed();
     log::debug!(
