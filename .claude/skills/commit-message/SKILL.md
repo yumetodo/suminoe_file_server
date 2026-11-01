@@ -1,11 +1,11 @@
 ---
 name: commit-message
-description: This skill should be used whenever Claude is about to write a git commit message in the cafce repository (e.g. the user says "commitして", "コミットして", "commit this"). Provides this project's commit message subject/body content conventions, derived from this repo's own commit history. Complements — does not replace — the harness's general git commit workflow (staging, confirmation, hooks, --no-gpg-sign等).
+description: This skill should be used whenever Claude is about to write a git commit message in this repository (e.g. the user says "commitして", "コミットして", "commit this"). Provides this project's commit message subject/body content conventions, derived from this repo's own commit history. Complements — does not replace — the harness's general git commit workflow (staging, confirmation, hooks, --no-gpg-sign等).
 ---
 
-# コミットメッセージ規約 (cafce)
+# コミットメッセージ規約
 
-このスキルは cafce リポジトリの全コミット履歴（`git log --all`、45件）を観察して抽出した、コミットメッセージの**内容・文体**の規約を提供する。ステージングや確認手順などgit操作自体の手順は、別途Claude Codeの標準のコミット手順に従う。ここではメッセージ本文の書き方のみを扱う。
+このスキルは、過去のコミット履歴を観察して抽出した、コミットメッセージの**内容・文体**の規約を提供する。ステージングや確認手順などgit操作自体の手順は、別途Claude Codeの標準のコミット手順に従う。ここではメッセージ本文の書き方のみを扱う。
 
 ## Subject行（1行目）
 

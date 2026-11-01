@@ -1,11 +1,11 @@
 ---
 name: design-doc
-description: This skill should be used when the user asks to "write a design doc", "create a design doc", "design docを書いて", "設計ドキュメントを作成して", "設計docを書きたい", or references `doc/design/` or `doc/llm_design_doc_template.md`. Use for authoring a new Design Doc for this project (cafce) under `doc/design/`, following the project's template and existing conventions. Not for ADRs — this project does not use ADRs.
+description: This skill should be used when the user asks to "write a design doc", "create a design doc", "design docを書いて", "設計ドキュメントを作成して", "設計docを書きたい", or references `doc/design/` or `doc/llm_design_doc_template.md`. Use for authoring a new Design Doc for this project under `doc/design/`, following the project's template and existing conventions. Not for ADRs — this project does not use ADRs.
 ---
 
-# Design Doc 作成 (cafce)
+# Design Doc 作成
 
-このスキルは、cafce プロジェクトにおける Design Doc（設計文書）を `doc/design/` 配下に作成するための手順を提供する。テンプレートは `assets/llm_design_doc_template.md` にある。
+このスキルは、このプロジェクトにおける Design Doc（設計文書）を `doc/design/` 配下に作成するための手順を提供する。テンプレートは `assets/llm_design_doc_template.md` にある。
 
 ## Design Doc の位置づけ
 
@@ -16,7 +16,7 @@ description: This skill should be used when the user asks to "write a design doc
 ## 書かないこと
 
 - **詳細な実装 How**: ループの実装方法、関数名、変数名、完全なコード実装などは、ユーザーから強い要求がない限り書かない。書くのは「何をするか」「どう責任分担するか」までで、コードそのものはコードに語らせる。
-  - 参考: このリポジトリの既存 Design Doc の一部（例: `20251231_s3_connect_design.md`, `20260101_aws_integration_test_design.md`）は完全な Rust 実装コードを含んでいるが、これは本方針が定まる前に書かれた過去の慣行であり、新規作成時は踏襲しない。関数シグネチャや責務の説明までに留める。
+  - 参考: 既存の Design Doc に完全な実装コードを含むものがあっても、それは本方針が定まる前の過去の慣行であり、新規作成時は踏襲しない。関数シグネチャや責務の説明までに留める。
 - **チケット管理ツールの情報**: 担当者・期日・ステータスは書かない。
 - **コード変更の詳細差分・全スキーマ定義**: テーブル全カラムやAPIの全フィールドは、マイグレーションファイルやAPI仕様書を正とし、Design Docには書かない。
 - **実装後に判明した変更の追記更新**: Living Document 化しない。実装状況のチェックリストやテスト結果のダッシュボード（例: 「✅ 完了した機能」「テスト結果: 28/28 成功」のような節）は書かない。これは CI のテストレポートやコミットログが正とする情報であり、Design Doc に書くと陳腐化が速い。
@@ -30,13 +30,13 @@ description: This skill should be used when the user asks to "write a design doc
      - `YYYYMMDD` は作成日（`date +%Y%m%d` などで取得。過去日付を偽装しない）
      - `<topic>` はテーマを表す英語スネークケース（例: `cache_key_files`, `s3_connect`, `aws_integration_test`）
      - 末尾は必ず `_design`
-   - 既存の命名例を参照: `20250727_cache_key_files_design.md`, `20251231_s3_connect_design.md`, `20260101_aws_integration_test_design.md`
+   - 命名例: `20250727_cache_key_files_design.md`, `20251231_s3_connect_design.md`, `20260101_aws_integration_test_design.md`
 
 2. **`assets/llm_design_doc_template.md` の見出し構成をそのままコピーする**
-   - 見出し番号は `1〜8`, `10〜12`（`9` は既存テンプレートに存在せず欠番。既存 Design Doc 全てがこの欠番を踏襲しているため、番号を振り直さずそのまま使う）。
+   - 見出し番号は `1〜8`, `10〜12`（`9` はテンプレートに存在せず欠番。番号を振り直さずそのまま使う）。
    - 文書タイトル（H1）は `# <日本語での対象名> 設計ドキュメント` の形式にする。
 
-3. **各節を以下の粒度で埋める**（既存 Design Doc 3件から見出せる規則性。冒頭「書かないこと」に反する内容は書かない）
+3. **各節を以下の粒度で埋める**（冒頭「書かないこと」に反する内容は書かない）
 
    | 節 | 書き方 |
    |---|---|

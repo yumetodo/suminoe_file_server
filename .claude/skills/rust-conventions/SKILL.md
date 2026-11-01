@@ -1,9 +1,9 @@
 ---
 name: rust-conventions
-description: This skill should be used whenever writing, editing, or reviewing Rust code (`*.rs`, `Cargo.toml`) in this repository (cafce) — e.g. "Rustのコードを書いて", "この関数を実装して", "このRustコードをレビューして". Encodes this project's opinionated Rust house rules ("RealWorld業務Rust"): import/naming style, error handling, concurrency, logging, testing, and dependency practices. Consult before writing new Rust code, refactoring, or reviewing a Rust diff.
+description: This skill should be used whenever writing, editing, or reviewing Rust code (`*.rs`, `Cargo.toml`) in this repository — e.g. "Rustのコードを書いて", "この関数を実装して", "このRustコードをレビューして". Encodes this project's opinionated Rust house rules ("RealWorld業務Rust"): import/naming style, error handling, concurrency, logging, testing, and dependency practices. Consult before writing new Rust code, refactoring, or reviewing a Rust diff.
 ---
 
-# Rust コーディング規約 (cafce / RealWorld業務Rust)
+# Rust コーディング規約 (RealWorld業務Rust)
 
 このプロジェクトの Rust コードは、個人のライブラリ開発ではなく複数人で保守する業務アプリケーションコードとして書く。「誰が読んでも理解でき、どこにでもコピペで移植できる愚直で平易なコード」を最優先し、実行効率や"賢い"抽象化より可読性・可保守性を優先する。
 
