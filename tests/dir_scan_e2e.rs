@@ -864,3 +864,93 @@ fn scan_once_exit_codes() {
     let stdout = String::from_utf8_lossy(&failed.stdout);
     assert!(stdout.contains("outcome=failed"), "{stdout}");
 }
+
+/// ユーザー名前空間とマウント名前空間を作って bind マウントできる環境か。
+/// 使えない環境ではそれを使うテストを飛ばす。
+fn can_bind_mount_in_a_new_namespace() -> bool {
+    let probe = new_temp_dir();
+    std::fs::create_dir_all(probe.path().join("src")).unwrap();
+    std::fs::create_dir_all(probe.path().join("dst")).unwrap();
+    let unshare_works = std::process::Command::new("unshare")
+        .args(["-rm", "true"])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if !unshare_works {
+        return false;
+    }
+    std::process::Command::new("unshare")
+        .args(["-rm", "mount", "--bind"])
+        .arg(probe.path().join("src"))
+        .arg(probe.path().join("dst"))
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// 新しいマウント名前空間の中で `<root>/a` を `<root>/a/b/loop` に bind マウントしてから、
+/// `scan_once` をフルスキャン（と `--partial`）で実行し、`--dump-dirs` の出力を返す。
+fn run_scan_once_with_bind_loop(root: &std::path::Path, partial_paths: &[&str]) -> Vec<u8> {
+    let script = r#"
+root="$1"
+exe="$2"
+shift 2
+mount --bind "$root/a" "$root/a/b/loop" || exit 90
+exec "$exe" "$root" --parallelism 2 --io-priority idle --exclude '**/.*' --dump-dirs "$@"
+"#;
+    let mut command = std::process::Command::new("unshare");
+    command
+        .args(["-rm", "sh", "-c", script, "sh"])
+        .arg(root)
+        .arg(scan_once_exe());
+    for partial_path in partial_paths {
+        command.arg("--partial").arg(partial_path);
+    }
+    let output = command.env("RUST_LOG", "info").output().unwrap();
+    assert!(
+        output.status.success(),
+        "status={:?}\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
+}
+
+/// 設計書 6.5 の循環の検出：部分スキャンは対象より上の祖先も循環の判定に使うので、
+/// bind マウントで `a/b/loop` が `a` を指していても、結果はフルスキャンと一致する。
+#[test]
+fn goal2_partial_scan_matches_a_full_scan_on_a_bind_mount_loop() {
+    init_logger();
+    if !can_bind_mount_in_a_new_namespace() {
+        eprintln!("skipped: `unshare -rm` with a bind mount is not available");
+        return;
+    }
+    let dir = new_temp_dir();
+    make_file(dir.path(), "f_root", 1);
+    make_file(dir.path(), "a/f1", 10);
+    make_file(dir.path(), "a/b/f2", 20);
+    make_file(dir.path(), "a/b/c/f3", 40);
+    std::fs::create_dir_all(dir.path().join("a/b/loop")).unwrap();
+
+    let full_only = run_scan_once_with_bind_loop(dir.path(), &[]);
+    let dump = String::from_utf8_lossy(&full_only).to_string();
+    // ループの中には入らない（`a/b/loop` 自身は出るが、その下は出ない）
+    assert!(dump.contains("/a/b/loop\t0\n"), "{dump}");
+    assert!(!dump.contains("/a/b/loop/"), "{dump}");
+    assert!(dump.contains("/a/b/c\t40\n"), "{dump}");
+
+    for partial_paths in [
+        vec!["a/b"],
+        vec!["a"],
+        vec!["a/b/loop"],
+        vec!["a/b/c", "a/b", "a"],
+    ] {
+        let with_partial = run_scan_once_with_bind_loop(dir.path(), &partial_paths);
+        assert!(
+            with_partial == full_only,
+            "partial={partial_paths:?}\n--- partial ---\n{}--- full ---\n{}",
+            String::from_utf8_lossy(&with_partial),
+            dump
+        );
+    }
+}

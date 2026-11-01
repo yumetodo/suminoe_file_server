@@ -106,6 +106,11 @@ pub struct WalkResult {
 ///   ため）。その下は一切リンクを辿らない。
 /// - `target`: 走査する対象のルートからの相対パス。フルスキャンは空のパス。部分スキャンは
 ///   [`crate::dir_scan::tree::Tree::resolve_partial_target`] が決めた `effective_path`。
+/// - `ancestors`: ルートから `target` の親までのディレクトリの dev/ino（ルートを含み、
+///   `target` 自身は含まない）。部分スキャンの走査が、フルスキャンと同じ循環の判定をするため
+///   に使う（[`crate::dir_scan::tree::Tree::ancestor_identities`]）。フルスキャンは空。
+///   親に遡って対象が変わったときは、遡った段数ぶん末尾を捨てて、遡った後の対象の親までの
+///   先頭部分だけを使う。
 /// - `name_hasher`: フルスキャンは新規、部分スキャンはツリーのものの複製。
 /// - `errors`: スキャン 1 回につき 1 つの記録器。
 ///
@@ -113,6 +118,7 @@ pub struct WalkResult {
 pub fn run_walk(
     root: &std::path::Path,
     target: &std::path::Path,
+    ancestors: &[DevIno],
     settings: &crate::dir_scan::settings::ScanSettings,
     name_hasher: &crate::dir_scan::tree::NameHasher,
     errors: std::sync::Arc<crate::dir_scan::report::ErrorRecorder>,
@@ -145,6 +151,7 @@ pub fn run_walk(
             walk_in_pool(
                 root,
                 &mut effective_path,
+                ancestors,
                 &mut parent_retries,
                 settings,
                 name_hasher,
@@ -220,9 +227,13 @@ fn is_changed_during_scan_errno(errno: i32) -> bool {
 ///
 /// 対象が `ENOENT`・`ENOTDIR`・`ELOOP` で開けなければ、親を対象にしてやり直し、経緯を
 /// `parent_retries` に残す（`effective_path` を親に更新する）。`EACCES` などは遡らず失敗。
+///
+/// `ancestors` は最初の対象のルートからその親までの dev/ino。対象が親に遡ると、遡った段数
+/// ぶん末尾を捨てて、遡った後の対象の親までの先頭部分を使う。
 fn walk_in_pool(
     root: &std::path::Path,
     effective_path: &mut std::path::PathBuf,
+    ancestors: &[DevIno],
     parent_retries: &mut Vec<crate::dir_scan::report::ParentRetry>,
     settings: &crate::dir_scan::settings::ScanSettings,
     name_hasher: &crate::dir_scan::tree::NameHasher,
@@ -252,6 +263,7 @@ fn walk_in_pool(
         WalkFailure::RootOpenFailed { errno }
     })?;
 
+    let initial_depth = effective_path.components().count();
     let target_fd = loop {
         match open_relative_dir(rustix::fd::AsFd::as_fd(&root_fd), effective_path) {
             Ok(fd) => break fd,
@@ -304,6 +316,9 @@ fn walk_in_pool(
         name_hasher,
         errors,
     };
+    // 親に遡った段数ぶん、一覧の末尾を捨てる（遡った後の対象の親までの先頭部分にする）
+    let retried_levels = initial_depth.saturating_sub(effective_path.components().count());
+    let target_ancestors = &ancestors[..ancestors.len().saturating_sub(retried_levels)];
     let target_name = effective_path
         .file_name()
         .map(std::ffi::OsStr::to_os_string)
@@ -315,7 +330,7 @@ fn walk_in_pool(
         target_name,
         // 開いた後の fstat が失敗したときの代わりの値（対象は dev/ino を知らない）
         DevIno { dev: 0, ino: 0 },
-        &[],
+        target_ancestors,
     )
     .map_err(|error| WalkFailure::Internal(error.to_string()))?;
     let counts = node.counts();
@@ -790,6 +805,7 @@ mod tests {
         run_walk(
             root,
             std::path::Path::new(""),
+            &[],
             settings,
             hasher,
             std::sync::Arc::new(crate::dir_scan::report::ErrorRecorder::new()),
@@ -805,6 +821,7 @@ mod tests {
         run_walk(
             root,
             std::path::Path::new(target),
+            &[],
             settings,
             hasher,
             std::sync::Arc::new(crate::dir_scan::report::ErrorRecorder::new()),
@@ -1124,6 +1141,7 @@ mod tests {
         let (partial, _) = success(run_walk(
             tree.path(),
             std::path::Path::new(dir_name),
+            &[],
             &settings(2, &[]),
             &hasher,
             std::sync::Arc::new(crate::dir_scan::report::ErrorRecorder::new()),
@@ -1491,6 +1509,121 @@ mod tests {
                 .count(crate::dir_scan::report::ScanErrorKind::CycleDetected),
             2
         );
+    }
+
+    fn identity_of_path(path: &std::path::Path) -> DevIno {
+        dev_ino_of(&open_dir(path))
+    }
+
+    fn walk_with_ancestors(
+        root: &std::path::Path,
+        target: &str,
+        ancestors: &[DevIno],
+    ) -> WalkResult {
+        run_walk(
+            root,
+            std::path::Path::new(target),
+            ancestors,
+            &settings(2, &[]),
+            &crate::dir_scan::tree::NameHasher::new(),
+            std::sync::Arc::new(crate::dir_scan::report::ErrorRecorder::new()),
+        )
+    }
+
+    #[test]
+    fn partial_walk_treats_a_descendant_equal_to_a_given_ancestor_as_a_cycle() {
+        init_logger();
+        let tree = sample_tree();
+        let root_identity = identity_of_path(tree.path());
+        let b_identity = identity_of_path(&tree.path().join("a/b"));
+
+        // 対象 `a` の祖先の一覧（ルート）に、対象の子孫 `a/b` の dev/ino を意図的に入れる。
+        // bind マウントで `a/b/loop` が `a` を指す場合の、`a` 側の見え方と同じ
+        let (ok, result) = success(walk_with_ancestors(
+            tree.path(),
+            "a",
+            &[root_identity, b_identity],
+        ));
+        let a = &ok.node;
+        let b = a.child(std::ffi::OsStr::new("b")).unwrap();
+        assert!(b.errors().cycle_detected);
+        assert_eq!(b.children().len(), 0);
+        // `a/b/f4`（40）は数えない
+        assert_eq!(b.total_size(), 0);
+        assert_eq!(a.total_size(), 50);
+        assert!(!a.is_complete());
+        assert_eq!(
+            result
+                .errors
+                .count(crate::dir_scan::report::ScanErrorKind::CycleDetected),
+            1
+        );
+
+        // 祖先の一覧が空なら（フルスキャンの対象がルートのとき以外は誤りだが）、循環にならない
+        let (ok, result) = success(walk_with_ancestors(tree.path(), "a", &[]));
+        assert_eq!(ok.node.total_size(), 90);
+        assert!(ok.node.is_complete());
+        assert_eq!(result.errors.total(), 0);
+    }
+
+    #[test]
+    fn partial_walk_target_equal_to_an_ancestor_is_a_cycle() {
+        init_logger();
+        let tree = sample_tree();
+        let root_identity = identity_of_path(tree.path());
+        let a_identity = identity_of_path(&tree.path().join("a"));
+        // 対象 `a/b` の祖先（ルート・`a`）に `a/b` 自身は含まれないので循環ではない
+        let (ok, _) = success(walk_with_ancestors(
+            tree.path(),
+            "a/b",
+            &[root_identity, a_identity],
+        ));
+        assert_eq!(ok.node.total_size(), 40);
+        assert!(ok.node.is_complete());
+
+        // 対象 `a` 自身の dev/ino が祖先にあれば、対象が循環のノードになる
+        let (ok, result) = success(walk_with_ancestors(tree.path(), "a", &[a_identity]));
+        assert!(ok.node.errors().cycle_detected);
+        assert_eq!(ok.node.name(), std::ffi::OsStr::new("a"));
+        assert_eq!(ok.node.total_size(), 0);
+        assert_eq!(
+            result
+                .errors
+                .count(crate::dir_scan::report::ScanErrorKind::CycleDetected),
+            1
+        );
+    }
+
+    #[test]
+    fn partial_walk_uses_only_the_leading_ancestors_after_retrying_with_the_parent() {
+        init_logger();
+        let tree = sample_tree();
+        let root_identity = identity_of_path(tree.path());
+        let a_identity = identity_of_path(&tree.path().join("a"));
+        let b_identity = identity_of_path(&tree.path().join("a/b"));
+        // 対象 `a/b/gone` は無く、`a/b` に遡る。最初の対象の祖先は [ルート, a, a/b] だが、
+        // 遡った後の対象 `a/b` の祖先は [ルート, a] だけ。`a/b` 自身は循環にならない
+        let (ok, result) = success(walk_with_ancestors(
+            tree.path(),
+            "a/b/gone",
+            &[root_identity, a_identity, b_identity],
+        ));
+        assert_eq!(result.effective_path, std::path::Path::new("a/b"));
+        assert_eq!(result.parent_retries.len(), 1);
+        assert!(!ok.node.errors().cycle_detected);
+        assert_eq!(ok.node.total_size(), 40);
+        assert_eq!(
+            result
+                .errors
+                .count(crate::dir_scan::report::ScanErrorKind::CycleDetected),
+            0
+        );
+
+        // ルートまで遡ったときは、祖先の一覧は空として扱う
+        let (ok, result) = success(walk_with_ancestors(tree.path(), "gone", &[root_identity]));
+        assert!(result.effective_path.as_os_str().is_empty());
+        assert!(!ok.node.errors().cycle_detected);
+        assert_eq!(ok.node.total_size(), 100);
     }
 
     #[test]

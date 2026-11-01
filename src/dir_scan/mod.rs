@@ -291,6 +291,9 @@ struct ScanPlan {
     generation_at_start: u64,
     /// 走査する対象（ルートからの相対パス。ルート全体なら空）
     walk_path: std::path::PathBuf,
+    /// ルートから `walk_path` の親までのディレクトリの dev/ino（ルートを含み、対象自身は
+    /// 含まない。フルスキャンは空）。ロックの中で取ったスナップショット
+    ancestors: Vec<walk::DevIno>,
     /// フルスキャンは新しいもの、部分スキャンはツリーのものの複製
     name_hasher: tree::NameHasher,
 }
@@ -398,6 +401,7 @@ impl Shared {
         let walk_result = walk::run_walk(
             &self.root,
             &plan.walk_path,
+            &plan.ancestors,
             &item.settings,
             &plan.name_hasher,
             std::sync::Arc::new(report::ErrorRecorder::new()),
@@ -509,17 +513,30 @@ impl Shared {
         let generation_at_start = guard.generation();
         let executed =
             request::effective_target(&item.target, &item.settings, guard.exclude_patterns());
-        let partial_plan = match &executed {
-            request::ScanTarget::Full => None,
-            request::ScanTarget::Partial(path) => guard
-                .resolve_partial_target(path.as_path())
-                .map(|resolved| (resolved.effective_path, guard.name_hasher().clone())),
-        };
+        let partial_plan =
+            match &executed {
+                request::ScanTarget::Full => None,
+                request::ScanTarget::Partial(path) => guard
+                    .resolve_partial_target(path.as_path())
+                    .map(|resolved| {
+                        // 対象より上の祖先も循環の判定に使う（フルスキャンと結果を一致させる）。
+                        // 辿れた対象なので `None` にはならないはずだが、もしなれば空にする
+                        let ancestors = guard
+                            .ancestor_identities(&resolved.effective_path)
+                            .unwrap_or_default();
+                        (
+                            resolved.effective_path,
+                            ancestors,
+                            guard.name_hasher().clone(),
+                        )
+                    }),
+            };
         drop(guard);
         match partial_plan {
-            Some((walk_path, name_hasher)) => ScanPlan {
+            Some((walk_path, ancestors, name_hasher)) => ScanPlan {
                 generation_at_start,
                 walk_path,
+                ancestors,
                 name_hasher,
             },
             // フルスキャン。部分スキャンなのにツリーが未スキャンで解決できなかった場合も、
@@ -527,6 +544,7 @@ impl Shared {
             None => ScanPlan {
                 generation_at_start,
                 walk_path: std::path::PathBuf::new(),
+                ancestors: Vec::new(),
                 name_hasher: fresh_hasher,
             },
         }
@@ -886,6 +904,92 @@ mod tests {
 
     fn report_of(completion: &request::Completion) -> &report::ScanReport {
         completion.report.as_ref().unwrap()
+    }
+
+    fn identity_of(path: &std::path::Path) -> walk::DevIno {
+        let metadata = std::fs::metadata(path).unwrap();
+        walk::DevIno {
+            dev: std::os::unix::fs::MetadataExt::dev(&metadata),
+            ino: std::os::unix::fs::MetadataExt::ino(&metadata),
+        }
+    }
+
+    fn plan_for(service: &ScanService, target: request::ScanTarget) -> ScanPlan {
+        let item = request::QueueItem {
+            settings: dot_excluded(),
+            target,
+            representative_request_id: 0,
+            waiters: Vec::new(),
+        };
+        service.shared.plan_scan(&item)
+    }
+
+    #[test]
+    fn plan_scan_collects_the_identities_of_the_ancestors_of_the_target() {
+        init_logger();
+        let dir = sample_tree();
+        let service = ScanService::start(dir.path().to_path_buf()).unwrap();
+        run_full(&service, dot_excluded());
+        let root = identity_of(dir.path());
+        let a = identity_of(&dir.path().join("a"));
+
+        // フルスキャンは空
+        let plan = plan_for(&service, request::ScanTarget::full());
+        assert!(plan.walk_path.as_os_str().is_empty());
+        assert!(plan.ancestors.is_empty());
+
+        // ルート直下の対象の祖先は、ルートだけ（対象自身は含まない）
+        let plan = plan_for(
+            &service,
+            request::ScanTarget::partial(std::path::Path::new("a")).unwrap(),
+        );
+        assert_eq!(plan.walk_path, std::path::Path::new("a"));
+        assert_eq!(plan.ancestors, vec![root]);
+
+        // 深い対象の祖先は、ルートから対象の親まで
+        let plan = plan_for(
+            &service,
+            request::ScanTarget::partial(std::path::Path::new("a/b")).unwrap(),
+        );
+        assert_eq!(plan.walk_path, std::path::Path::new("a/b"));
+        assert_eq!(plan.ancestors, vec![root, a]);
+
+        // ツリーに無いパスは、辿れた一番深いディレクトリに遡る。祖先もそのディレクトリの親まで
+        let plan = plan_for(
+            &service,
+            request::ScanTarget::partial(std::path::Path::new("a/b/new/x")).unwrap(),
+        );
+        assert_eq!(plan.walk_path, std::path::Path::new("a/b"));
+        assert_eq!(plan.ancestors, vec![root, a]);
+        let plan = plan_for(
+            &service,
+            request::ScanTarget::partial(std::path::Path::new("a/new/x")).unwrap(),
+        );
+        assert_eq!(plan.walk_path, std::path::Path::new("a"));
+        assert_eq!(plan.ancestors, vec![root]);
+
+        // ルートまで遡るなら空
+        let plan = plan_for(
+            &service,
+            request::ScanTarget::partial(std::path::Path::new("nothing/x")).unwrap(),
+        );
+        assert!(plan.walk_path.as_os_str().is_empty());
+        assert!(plan.ancestors.is_empty());
+        service.shutdown();
+    }
+
+    #[test]
+    fn plan_scan_of_an_unscanned_tree_is_a_full_scan_without_ancestors() {
+        init_logger();
+        let dir = sample_tree();
+        let service = ScanService::start(dir.path().to_path_buf()).unwrap();
+        let plan = plan_for(
+            &service,
+            request::ScanTarget::partial(std::path::Path::new("a/b")).unwrap(),
+        );
+        assert!(plan.walk_path.as_os_str().is_empty());
+        assert!(plan.ancestors.is_empty());
+        service.shutdown();
     }
 
     #[test]

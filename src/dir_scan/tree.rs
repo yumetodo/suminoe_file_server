@@ -652,6 +652,31 @@ impl Tree {
         })
     }
 
+    /// ルートから `effective_path` の親までのディレクトリの dev/ino を、ルートから順に集める
+    /// （設計書 6.5, 6.6）。ルートを含み、`effective_path` 自身は含まない。したがって長さは
+    /// `effective_path` の要素数と同じで、ルート（空のパス）なら空。
+    ///
+    /// 部分スキャンの走査が、フルスキャンと同じ循環の判定をするために使う。ファイル
+    /// システムには触れない。未スキャンのとき、またはツリーに無いパス・不正なパスのときは
+    /// `None`。
+    pub fn ancestor_identities(
+        &self,
+        effective_path: &std::path::Path,
+    ) -> Option<Vec<crate::dir_scan::walk::DevIno>> {
+        let components = normal_components(effective_path)?;
+        let mut current = self.root.as_ref()?;
+        let mut identities: Vec<crate::dir_scan::walk::DevIno> =
+            Vec::with_capacity(components.len());
+        for component in components {
+            identities.push(crate::dir_scan::walk::DevIno {
+                dev: current.dev(),
+                ino: current.ino(),
+            });
+            current = current.child(component)?;
+        }
+        Some(identities)
+    }
+
     /// フルスキャンの結果を反映する（設計書 6.6）。ルートのノードを入れ替え、除外パターン・
     /// ハッシュ生成器・状態を更新し、`generation` を 1 増やす。
     /// `scan_had_errors` はスキャンが「エラーありで成功」だったか。
