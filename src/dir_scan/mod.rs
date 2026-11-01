@@ -927,52 +927,73 @@ mod tests {
     #[test]
     fn plan_scan_collects_the_identities_of_the_ancestors_of_the_target() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
         run_full(&service, dot_excluded());
         let root = identity_of(dir.path());
         let a = identity_of(&dir.path().join("a"));
 
-        // フルスキャンは空
+        // Act
         let plan = plan_for(&service, request::ScanTarget::full());
+
+        // Assert
+        // フルスキャンは空
         assert!(plan.walk_path.as_os_str().is_empty());
         assert!(plan.ancestors.is_empty());
 
-        // ルート直下の対象の祖先は、ルートだけ（対象自身は含まない）
+        // Act
         let plan = plan_for(
             &service,
             request::ScanTarget::partial(std::path::Path::new("a")).unwrap(),
         );
+
+        // Assert
+        // ルート直下の対象の祖先はルートだけ（対象自身は含まない）
         assert_eq!(plan.walk_path, std::path::Path::new("a"));
         assert_eq!(plan.ancestors, vec![root]);
 
-        // 深い対象の祖先は、ルートから対象の親まで
+        // Act
         let plan = plan_for(
             &service,
             request::ScanTarget::partial(std::path::Path::new("a/b")).unwrap(),
         );
+
+        // Assert
+        // 深い対象の祖先はルートから対象の親まで
         assert_eq!(plan.walk_path, std::path::Path::new("a/b"));
         assert_eq!(plan.ancestors, vec![root, a]);
 
-        // ツリーに無いパスは、辿れた一番深いディレクトリに遡る。祖先もそのディレクトリの親まで
+        // Act
         let plan = plan_for(
             &service,
             request::ScanTarget::partial(std::path::Path::new("a/b/new/x")).unwrap(),
         );
+
+        // Assert
+        // ツリーに無いパスは辿れた一番深いディレクトリに遡る。祖先もそのディレクトリの親まで
         assert_eq!(plan.walk_path, std::path::Path::new("a/b"));
         assert_eq!(plan.ancestors, vec![root, a]);
+
+        // Act
         let plan = plan_for(
             &service,
             request::ScanTarget::partial(std::path::Path::new("a/new/x")).unwrap(),
         );
+
+        // Assert
         assert_eq!(plan.walk_path, std::path::Path::new("a"));
         assert_eq!(plan.ancestors, vec![root]);
 
-        // ルートまで遡るなら空
+        // Act
         let plan = plan_for(
             &service,
             request::ScanTarget::partial(std::path::Path::new("nothing/x")).unwrap(),
         );
+
+        // Assert
+        // ルートまで遡るなら空
         assert!(plan.walk_path.as_os_str().is_empty());
         assert!(plan.ancestors.is_empty());
         service.shutdown();
@@ -981,12 +1002,18 @@ mod tests {
     #[test]
     fn plan_scan_of_an_unscanned_tree_is_a_full_scan_without_ancestors() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
+
+        // Act
         let plan = plan_for(
             &service,
             request::ScanTarget::partial(std::path::Path::new("a/b")).unwrap(),
         );
+
+        // Assert
         assert!(plan.walk_path.as_os_str().is_empty());
         assert!(plan.ancestors.is_empty());
         service.shutdown();
@@ -995,15 +1022,28 @@ mod tests {
     #[test]
     fn list_own_sizes_matches_read_directory() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
-        assert!(service.list_own_sizes().unwrap().is_empty());
+
+        // Act
+        let before_scan = service.list_own_sizes().unwrap();
+
+        // Assert
+        assert!(before_scan.is_empty());
+
+        // Arrange
         run_full(&service, dot_excluded());
-        let listed = service.list_own_sizes().unwrap();
         let expected: Vec<(std::path::PathBuf, u128)> = snapshot(&service)
             .into_iter()
             .map(|(path, (own_size, _, _))| (path, own_size))
             .collect();
+
+        // Act
+        let listed = service.list_own_sizes().unwrap();
+
+        // Assert
         assert_eq!(listed, expected);
         assert_eq!(listed.len(), 5);
         service.shutdown();
@@ -1012,18 +1052,27 @@ mod tests {
     #[test]
     fn full_scan_builds_the_tree_and_the_report() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
+
+        // Act
         let before = service.read_directory(std::path::Path::new("")).unwrap();
+
+        // Assert
         assert_eq!(before.status.snapshot, tree::SnapshotState::Unscanned);
         assert_eq!(before.status.generation, 0);
         assert_eq!(before.directory, tree::DirectoryLookup::NotFound);
         assert!(service.last_full_report().is_none());
         assert!(service.last_partial_report().is_none());
 
+        // Act
         let ticket = service.request_full_scan(dot_excluded()).unwrap();
         let request_id = ticket.request_id();
         let completion = wait_completion(ticket);
+
+        // Assert
         assert_eq!(completion.request_id, request_id);
         assert_eq!(completion.disposition, request::Disposition::Executed);
         assert_eq!(completion.requested, request::ScanTarget::full());
@@ -1103,9 +1152,14 @@ mod tests {
     #[test]
     fn invalid_partial_path_is_rejected_immediately() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
-        for path in ["", "/abs", "../x", "a/../b"] {
+        let paths = ["", "/abs", "../x", "a/../b"];
+
+        // Act & Assert
+        for path in paths {
             assert!(
                 service
                     .request_partial_scan(std::path::Path::new(path), dot_excluded())
@@ -1113,6 +1167,8 @@ mod tests {
                 "{path:?}"
             );
         }
+
+        // Assert
         assert!(service.shared.lock_state().queue.is_empty());
         service.shutdown();
     }
@@ -1120,6 +1176,8 @@ mod tests {
     #[test]
     fn partial_scan_equals_full_rescan_after_changes() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
         run_full(&service, dot_excluded());
@@ -1130,10 +1188,13 @@ mod tests {
         make_file(dir.path(), "a/b/new_file", 123);
         make_file(dir.path(), "a/newdir/n1", 1);
         make_file(dir.path(), "a/newdir/deep/n2", 2);
-        // a の外の変更は、部分スキャンでは反映されない
+        // a の外の変更は部分スキャンでは反映されない
         make_file(dir.path(), "c/f5", 6000);
 
+        // Act
         let completion = run_partial(&service, "a", dot_excluded());
+
+        // Assert
         assert_eq!(completion.disposition, request::Disposition::Executed);
         assert_eq!(
             completion.executed,
@@ -1162,8 +1223,11 @@ mod tests {
             completion.report.as_ref().unwrap()
         ));
 
+        // Act
         // c も反映してから、フルスキャンし直した結果と一致する
         run_partial(&service, "c", dot_excluded());
+
+        // Assert
         assert_eq!(
             snapshot(&service),
             fresh_full_snapshot(dir.path(), dot_excluded())
@@ -1210,18 +1274,24 @@ mod tests {
     #[test]
     fn partial_case_existing_directory() {
         init_logger();
+
+        // Act & Assert
         check_partial_case(|root| make_file(root, "a/b/f4", 4000), "a/b", "a/b");
     }
 
     #[test]
     fn partial_case_path_under_a_new_directory_resolves_to_the_parent() {
         init_logger();
+
+        // Act & Assert
         check_partial_case(|root| make_file(root, "a/new/x/file", 99), "a/new/x", "a");
     }
 
     #[test]
     fn partial_case_file_resolves_to_its_directory() {
         init_logger();
+
+        // Act & Assert
         check_partial_case(
             |root| make_file(root, "a/b/file.txt", 5555),
             "a/b/file.txt",
@@ -1232,6 +1302,8 @@ mod tests {
     #[test]
     fn partial_case_excluded_path_resolves_to_the_parent() {
         init_logger();
+
+        // Act & Assert
         check_partial_case(
             |root| {
                 make_file(root, "a/.cache/x", 1000);
@@ -1245,6 +1317,8 @@ mod tests {
     #[test]
     fn partial_case_symlink_resolves_to_the_parent() {
         init_logger();
+
+        // Act & Assert
         check_partial_case(
             |root| {
                 std::os::unix::fs::symlink(root.join("c"), root.join("a/link")).unwrap();
@@ -1258,12 +1332,18 @@ mod tests {
     #[test]
     fn partial_case_directory_replaced_by_a_file_retries_with_the_parent() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
         run_full(&service, dot_excluded());
         std::fs::remove_dir_all(dir.path().join("a/b")).unwrap();
         make_file(dir.path(), "a/b", 777);
+
+        // Act
         let completion = run_partial(&service, "a/b", dot_excluded());
+
+        // Assert
         let report = report_of(&completion);
         assert_eq!(report.outcome, report::ScanOutcome::Success);
         assert_eq!(
@@ -1295,11 +1375,17 @@ mod tests {
     #[test]
     fn partial_case_vanished_directory_retries_with_the_parent() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
         run_full(&service, dot_excluded());
         std::fs::remove_dir_all(dir.path().join("a/b")).unwrap();
+
+        // Act
         let completion = run_partial(&service, "a/b", dot_excluded());
+
+        // Assert
         let report = report_of(&completion);
         assert_eq!(report.outcome, report::ScanOutcome::Success);
         assert_eq!(report.effective_path, std::path::PathBuf::from("a"));
@@ -1315,12 +1401,18 @@ mod tests {
     #[test]
     fn partial_scan_retrying_up_to_the_root_is_applied_as_a_full_scan() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
         run_full(&service, dot_excluded());
         std::fs::remove_dir_all(dir.path().join("c")).unwrap();
         make_file(dir.path(), "g/new", 8);
+
+        // Act
         let completion = run_partial(&service, "c", dot_excluded());
+
+        // Assert
         let report = report_of(&completion);
         assert_eq!(report.outcome, report::ScanOutcome::Success);
         // 実行された種類はフル、要求されたパスは残り、経緯が分かる
@@ -1363,6 +1455,8 @@ mod tests {
     #[test]
     fn unreadable_partial_target_fails_and_keeps_the_existing_subtree() {
         init_logger();
+
+        // Arrange
         if is_root() {
             return;
         }
@@ -1376,6 +1470,8 @@ mod tests {
             <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o000),
         )
         .unwrap();
+
+        // Act
         // 先に変更しても、反映されない
         let completion = run_partial(&service, "a/b", dot_excluded());
         std::fs::set_permissions(
@@ -1383,6 +1479,8 @@ mod tests {
             <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
         )
         .unwrap();
+
+        // Assert
         assert_eq!(completion.disposition, request::Disposition::Failed);
         let report = report_of(&completion);
         assert!(matches!(report.outcome, report::ScanOutcome::Failed(_)));
@@ -1403,6 +1501,8 @@ mod tests {
     #[test]
     fn unreadable_directory_makes_ancestors_incomplete() {
         init_logger();
+
+        // Arrange
         if is_root() {
             return;
         }
@@ -1414,12 +1514,16 @@ mod tests {
         )
         .unwrap();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
+
+        // Act
         let completion = run_full(&service, dot_excluded());
         std::fs::set_permissions(
             &unreadable,
             <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
         )
         .unwrap();
+
+        // Assert
         let report = report_of(&completion);
         assert_eq!(report.outcome, report::ScanOutcome::SuccessWithErrors);
         let read = service.read_directory(std::path::Path::new("")).unwrap();
@@ -1447,9 +1551,15 @@ mod tests {
     #[test]
     fn partial_scan_on_an_unscanned_tree_is_upgraded_to_full() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
+
+        // Act
         let completion = run_partial(&service, "a/b", dot_excluded());
+
+        // Assert
         assert_eq!(completion.disposition, request::Disposition::Executed);
         assert_eq!(
             completion.requested,
@@ -1476,12 +1586,18 @@ mod tests {
     #[test]
     fn partial_scan_with_different_exclude_patterns_is_upgraded_to_full() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
         run_full(&service, settings(2, &[]));
         // 除外なしのツリーには .hidden が載っている
         assert_eq!(snapshot(&service)[std::path::Path::new("a")].0, 57);
+
+        // Act
         let completion = run_partial(&service, "a", dot_excluded());
+
+        // Assert
         assert_eq!(completion.executed, Some(request::ScanTarget::full()));
         let report = report_of(&completion);
         assert_eq!(report.kind, report::ScanKind::Full);
@@ -1499,8 +1615,12 @@ mod tests {
                 Some(&dot_excluded().exclude_patterns)
             );
         }
+
+        // Act
         // 以後、同じ除外パターンの部分スキャンは格上げされない
         let completion = run_partial(&service, "a", dot_excluded());
+
+        // Assert
         assert_eq!(report_of(&completion).kind, report::ScanKind::Partial);
         service.shutdown();
     }
@@ -1508,11 +1628,12 @@ mod tests {
     #[test]
     fn requests_are_merged_while_a_scan_is_running_and_upgraded_together() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
         let x = settings(2, &[]);
         let y = settings(1, &["**/.*"]);
-
         // 先行のフルスキャン F（設定 Y）をスキャン実行スレッドで止めておく
         service.shared.test_gate.arm();
         let ticket_f = service.request_full_scan(y).unwrap();
@@ -1520,6 +1641,7 @@ mod tests {
         // F は実行中なのでキューにはない。以後の要求は F に統合されない
         assert_eq!(service.shared.lock_state().queue.len(), 0);
 
+        // Act
         let ticket_a = service
             .request_partial_scan(std::path::Path::new("a/b"), x.clone())
             .unwrap();
@@ -1529,20 +1651,24 @@ mod tests {
         let ticket_c = service
             .request_partial_scan(std::path::Path::new("a/b"), x.clone())
             .unwrap();
+
+        // Assert
         // A・B・C は 1 つの要素に統合されている
         assert_eq!(service.shared.lock_state().queue.len(), 1);
+
+        // Act
         let (id_a, id_b, id_c) = (
             ticket_a.request_id(),
             ticket_b.request_id(),
             ticket_c.request_id(),
         );
         service.shared.test_gate.release();
-
         let completion_f = wait_completion(ticket_f);
         let completion_a = wait_completion(ticket_a);
         let completion_b = wait_completion(ticket_b);
         let completion_c = wait_completion(ticket_c);
 
+        // Assert
         assert_eq!(completion_f.disposition, request::Disposition::Executed);
         assert_eq!(completion_f.executed, Some(request::ScanTarget::full()));
         let execution_f = completion_f.execution_id.unwrap();
@@ -1602,18 +1728,21 @@ mod tests {
     #[test]
     fn merged_partial_requests_run_as_one_partial_scan_without_upgrade() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
         run_full(&service, dot_excluded());
         make_file(dir.path(), "a/b/f4", 400);
-
+        let other = settings(3, &["**/.*"]);
         service.shared.test_gate.arm();
         let ticket_blocker = service
             .request_partial_scan(std::path::Path::new("c"), dot_excluded())
             .unwrap();
         service.shared.test_gate.wait_reached();
+
+        // Act
         // 設定が違う要求は統合されない
-        let other = settings(3, &["**/.*"]);
         let ticket_a = service
             .request_partial_scan(std::path::Path::new("a/b"), dot_excluded())
             .unwrap();
@@ -1623,13 +1752,18 @@ mod tests {
         let ticket_b = service
             .request_partial_scan(std::path::Path::new("a"), dot_excluded())
             .unwrap();
-        assert_eq!(service.shared.lock_state().queue.len(), 2);
-        service.shared.test_gate.release();
 
+        // Assert
+        assert_eq!(service.shared.lock_state().queue.len(), 2);
+
+        // Act
+        service.shared.test_gate.release();
         wait_completion(ticket_blocker);
         let completion_a = wait_completion(ticket_a);
         let completion_other = wait_completion(ticket_other);
         let completion_b = wait_completion(ticket_b);
+
+        // Assert
         // A は B に飲み込まれて、A の位置で（other より先に）実行された
         assert_eq!(completion_a.execution_id, completion_b.execution_id);
         assert!(completion_a.execution_id.unwrap() < completion_other.execution_id.unwrap());
@@ -1655,9 +1789,15 @@ mod tests {
     #[test]
     fn unopenable_root_fails_and_leaves_an_unscanned_tree_unscanned() {
         init_logger();
+
+        // Arrange
         let dir = tempfile::tempdir().unwrap();
         let service = ScanService::start(dir.path().join("missing")).unwrap();
+
+        // Act
         let completion = run_full(&service, dot_excluded());
+
+        // Assert
         assert_eq!(completion.disposition, request::Disposition::Failed);
         assert_eq!(
             completion.execution_id,
@@ -1690,6 +1830,8 @@ mod tests {
     #[test]
     fn root_that_becomes_unopenable_keeps_the_previous_tree() {
         init_logger();
+
+        // Arrange
         let parent = tempfile::tempdir().unwrap();
         let root = parent.path().join("root");
         std::fs::create_dir(&root).unwrap();
@@ -1698,7 +1840,11 @@ mod tests {
         run_full(&service, dot_excluded());
         let before = snapshot(&service);
         std::fs::remove_dir_all(&root).unwrap();
+
+        // Act
         let completion = run_full(&service, dot_excluded());
+
+        // Assert
         assert_eq!(completion.disposition, request::Disposition::Failed);
         assert_eq!(report_of(&completion).generations.after_apply, 1);
         assert_eq!(snapshot(&service), before);
@@ -1709,10 +1855,16 @@ mod tests {
             read.status.last_scan.unwrap().outcome,
             report::ScanOutcome::Failed(_)
         ));
+
+        // Arrange
         // 回復したら次のスキャンは成功する
         std::fs::create_dir(&root).unwrap();
         make_file(&root, "b/g", 5);
+
+        // Act
         let completion = run_full(&service, dot_excluded());
+
+        // Assert
         assert_eq!(completion.disposition, request::Disposition::Executed);
         assert_eq!(
             service
@@ -1728,12 +1880,17 @@ mod tests {
     #[test]
     fn worker_ioprio_is_recorded_for_idle_and_best_effort() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
-        for (parallelism, io_priority) in [
+        let cases = [
             (3, settings::IoPriority::Idle),
             (2, settings::IoPriority::best_effort(2).unwrap()),
-        ] {
+        ];
+
+        // Act & Assert
+        for (parallelism, io_priority) in cases {
             let completion = run_full(&service, settings_with_io(parallelism, io_priority, &[]));
             let report = report_of(&completion);
             assert_eq!(report.worker_ioprio.len(), parallelism);
@@ -1754,6 +1911,8 @@ mod tests {
     #[test]
     fn shutdown_completes_the_running_scan_and_stops_the_queued_ones() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
         service.shared.test_gate.arm();
@@ -1767,19 +1926,23 @@ mod tests {
         let ticket_q3 = service.request_full_scan(settings(2, &[])).unwrap();
         assert_eq!(service.shared.lock_state().queue.len(), 2);
 
-        std::thread::scope(|scope| {
+        // Act
+        let rejected = std::thread::scope(|scope| {
             let stopper = scope.spawn(|| service.shutdown());
             // 停止が始まってから実行中の 1 件を再開する
             while !service.shared.lock_state().stopping {
                 std::thread::yield_now();
             }
             // 新しい要求は受け付けない
-            assert!(service.request_full_scan(settings(5, &[])).is_err());
+            let rejected = service.request_full_scan(settings(5, &[]));
             service.shared.test_gate.release();
             stopper.join().unwrap();
+            rejected
         });
-
         let running = wait_completion(ticket_running);
+
+        // Assert
+        assert!(rejected.is_err());
         assert_eq!(running.disposition, request::Disposition::Executed);
         assert_eq!(report_of(&running).outcome, report::ScanOutcome::Success);
         for (ticket, expected_requested) in [
@@ -1797,10 +1960,15 @@ mod tests {
             assert!(completion.report.is_none());
             assert_eq!(completion.requested, expected_requested);
         }
+
+        // Act
         // 停止後の要求は Err、二重の停止も安全
-        assert!(service.request_full_scan(settings(1, &[])).is_err());
+        let after_stop = service.request_full_scan(settings(1, &[]));
         service.shutdown();
         service.shutdown();
+
+        // Assert
+        assert!(after_stop.is_err());
         // 実行された 1 件だけが反映されている
         let read = service.read_directory(std::path::Path::new("")).unwrap();
         assert_eq!(read.status.generation, 1);
@@ -1809,6 +1977,8 @@ mod tests {
     #[test]
     fn drop_stops_the_service_and_notifies_queued_requests() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
         service.shared.test_gate.arm();
@@ -1816,6 +1986,8 @@ mod tests {
         service.shared.test_gate.wait_reached();
         let ticket_queued = service.request_full_scan(settings(2, &[])).unwrap();
         let shared = std::sync::Arc::clone(&service.shared);
+
+        // Act
         std::thread::scope(|scope| {
             let dropper = scope.spawn(move || drop(service));
             while !shared.lock_state().stopping {
@@ -1824,34 +1996,45 @@ mod tests {
             shared.test_gate.release();
             dropper.join().unwrap();
         });
-        assert_eq!(
-            wait_completion(ticket_running).disposition,
-            request::Disposition::Executed
-        );
-        assert_eq!(
-            wait_completion(ticket_queued).disposition,
-            request::Disposition::Stopped
-        );
+        let running = wait_completion(ticket_running);
+        let queued = wait_completion(ticket_queued);
+
+        // Assert
+        assert_eq!(running.disposition, request::Disposition::Executed);
+        assert_eq!(queued.disposition, request::Disposition::Stopped);
     }
 
     #[test]
     fn shutdown_without_requests_returns_and_is_idempotent() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
+
+        // Act
         service.shutdown();
         service.shutdown();
-        assert!(service.request_full_scan(dot_excluded()).is_err());
+        let after_stop = service.request_full_scan(dot_excluded());
+
+        // Assert
+        assert!(after_stop.is_err());
     }
 
     #[test]
     fn panic_in_the_scan_thread_fails_the_request_and_the_thread_continues() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
         run_full(&service, dot_excluded());
         service.shared.test_gate.arm_panic();
+
+        // Act
         let completion = run_partial(&service, "a", dot_excluded());
+
+        // Assert
         assert_eq!(completion.disposition, request::Disposition::Failed);
         let report = report_of(&completion);
         let report::ScanOutcome::Failed(reason) = &report.outcome else {
@@ -1865,8 +2048,12 @@ mod tests {
             read.status.last_scan.unwrap().outcome,
             report::ScanOutcome::Failed(_)
         ));
+
+        // Act
         // 次の要求は処理される
         let completion = run_partial(&service, "a", dot_excluded());
+
+        // Assert
         assert_eq!(completion.disposition, request::Disposition::Executed);
         assert_eq!(report_of(&completion).generations.after_apply, 2);
         service.shutdown();
@@ -1875,37 +2062,35 @@ mod tests {
     #[test]
     fn only_inconsistent_tree_errors_abort_the_process() {
         init_logger();
-        assert_eq!(
-            handle_apply_error(&tree::TreeError::Inconsistent("x".to_string())),
-            ApplyErrorHandling::AbortProcess
-        );
-        assert_eq!(
-            handle_apply_error(&tree::TreeError::GenerationOverflow),
-            ApplyErrorHandling::AbortProcess
-        );
-        assert_eq!(
-            handle_apply_error(&tree::TreeError::NotScanned),
-            ApplyErrorHandling::FailScan
-        );
-        assert_eq!(
-            handle_apply_error(&tree::TreeError::PathNotFound(std::path::PathBuf::from(
-                "a"
-            ))),
-            ApplyErrorHandling::FailScan
-        );
-        assert_eq!(
-            handle_apply_error(&tree::TreeError::DuplicateName(std::ffi::OsString::from(
-                "a"
-            ))),
-            ApplyErrorHandling::FailScan
-        );
+
+        // Act
+        let inconsistent = handle_apply_error(&tree::TreeError::Inconsistent("x".to_string()));
+        let generation_overflow = handle_apply_error(&tree::TreeError::GenerationOverflow);
+        let not_scanned = handle_apply_error(&tree::TreeError::NotScanned);
+        let path_not_found = handle_apply_error(&tree::TreeError::PathNotFound(
+            std::path::PathBuf::from("a"),
+        ));
+        let duplicate_name = handle_apply_error(&tree::TreeError::DuplicateName(
+            std::ffi::OsString::from("a"),
+        ));
+
+        // Assert
+        assert_eq!(inconsistent, ApplyErrorHandling::AbortProcess);
+        assert_eq!(generation_overflow, ApplyErrorHandling::AbortProcess);
+        assert_eq!(not_scanned, ApplyErrorHandling::FailScan);
+        assert_eq!(path_not_found, ApplyErrorHandling::FailScan);
+        assert_eq!(duplicate_name, ApplyErrorHandling::FailScan);
     }
 
     #[test]
     fn non_fatal_apply_error_leaves_the_tree_unchanged() {
         init_logger();
-        // 未スキャンのツリーに部分木を反映しようとすると NotScanned（致命的ではない）
+
+        // Arrange
         let mut target = tree::Tree::new();
+
+        // Act
+        // 未スキャンのツリーに部分木を反映しようとすると NotScanned（致命的ではない）
         let result = apply_scanned(
             &mut target,
             ScannedTree::Partial {
@@ -1915,6 +2100,8 @@ mod tests {
             false,
             std::time::SystemTime::now(),
         );
+
+        // Assert
         assert_eq!(result.err(), Some(tree::TreeError::NotScanned));
         assert_eq!(target.generation(), 0);
         assert_eq!(target.snapshot_state(), tree::SnapshotState::Unscanned);
@@ -1923,10 +2110,14 @@ mod tests {
     #[test]
     fn readers_are_not_blocked_forever_while_scans_are_applied() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
         run_full(&service, dot_excluded());
         let stop = std::sync::atomic::AtomicBool::new(false);
+
+        // Act & Assert
         std::thread::scope(|scope| {
             let mut readers = Vec::new();
             for _ in 0..4 {
@@ -1955,6 +2146,8 @@ mod tests {
                 assert!(reader.join().unwrap() > 0);
             }
         });
+
+        // Assert
         assert_eq!(
             service
                 .read_directory(std::path::Path::new(""))
@@ -1969,20 +2162,26 @@ mod tests {
     #[test]
     fn scan_waits_for_a_reader_holding_the_lock_and_then_applies() {
         init_logger();
+
+        // Arrange
         let dir = sample_tree();
         let service = ScanService::start(dir.path().to_path_buf()).unwrap();
         run_full(&service, dot_excluded());
         let guard = service.shared.tree.read().unwrap();
+
+        // Act
         let ticket = service
             .request_partial_scan(std::path::Path::new("a"), dot_excluded())
             .unwrap();
-        // 読み取りロックを持っている間は反映できないので、完了は届かない
-        assert!(ticket
+        let before_release = ticket
             .wait_timeout(std::time::Duration::from_millis(300))
-            .unwrap()
-            .is_none());
+            .unwrap();
         drop(guard);
         let completion = wait_completion(ticket);
+
+        // Assert
+        // 読み取りロックを持っている間は反映できないので、完了は届かない
+        assert!(before_release.is_none());
         assert_eq!(completion.disposition, request::Disposition::Executed);
         assert!(
             report_of(&completion).durations.lock_wait >= std::time::Duration::from_millis(100)
