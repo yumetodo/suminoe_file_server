@@ -683,6 +683,10 @@ fn scan_once_exe() -> std::path::PathBuf {
             let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
             let mut command = std::process::Command::new(cargo);
             command.args(["build", "--example", "scan_once"]);
+            // `cargo test --target-dir ...`・`cargo llvm-cov` のように出力先が既定でない場合でも、
+            // テストの実行ファイルと同じ target ディレクトリにビルドする
+            command.arg("--target-dir");
+            command.arg(profile_dir.parent().unwrap());
             if profile_dir.file_name() == Some(std::ffi::OsStr::new("release")) {
                 command.arg("--release");
             }
