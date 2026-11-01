@@ -644,38 +644,50 @@ mod tests {
     #[test]
     fn stat_file_kind_distinguishes_enoent() {
         init_logger();
-        assert_eq!(
-            ScanErrorKind::stat_file(libc::ENOENT),
-            ScanErrorKind::StatFileNotFound
-        );
-        assert_eq!(
-            ScanErrorKind::stat_file(libc::EACCES),
-            ScanErrorKind::StatFile
-        );
-        assert_eq!(ScanErrorKind::stat_file(libc::EIO), ScanErrorKind::StatFile);
+
+        // Act
+        let not_found = ScanErrorKind::stat_file(libc::ENOENT);
+        let access_denied = ScanErrorKind::stat_file(libc::EACCES);
+        let io_error = ScanErrorKind::stat_file(libc::EIO);
+
+        // Assert
+        assert_eq!(not_found, ScanErrorKind::StatFileNotFound);
+        assert_eq!(access_denied, ScanErrorKind::StatFile);
+        assert_eq!(io_error, ScanErrorKind::StatFile);
     }
 
     #[test]
     fn all_kinds_are_listed_once_and_named() {
         init_logger();
+
+        // Act
         let set: std::collections::BTreeSet<ScanErrorKind> =
             ScanErrorKind::ALL.iter().copied().collect();
-        assert_eq!(set.len(), ScanErrorKind::ALL.len());
         let names: std::collections::BTreeSet<&str> =
             ScanErrorKind::ALL.iter().map(|k| k.as_str()).collect();
+        let walk_panic_name = ScanErrorKind::WalkPanic.to_string();
+
+        // Assert
+        assert_eq!(set.len(), ScanErrorKind::ALL.len());
         assert_eq!(names.len(), ScanErrorKind::ALL.len());
-        assert_eq!(ScanErrorKind::WalkPanic.to_string(), "WalkPanic");
+        assert_eq!(walk_panic_name, "WalkPanic");
     }
 
     #[test]
     fn error_counts_aggregate_by_kind_and_errno() {
         init_logger();
+
+        // Arrange
         let mut counts = ErrorCounts::new();
+
+        // Act
         counts.record(ScanErrorKind::OpenDirectory, Some(libc::EACCES));
         counts.record(ScanErrorKind::OpenDirectory, Some(libc::EACCES));
         counts.record(ScanErrorKind::StatFile, Some(libc::EACCES));
         counts.record(ScanErrorKind::StatFile, Some(libc::EIO));
         counts.record(ScanErrorKind::CycleDetected, None);
+
+        // Assert
         assert_eq!(counts.count(ScanErrorKind::OpenDirectory), 2);
         assert_eq!(counts.count(ScanErrorKind::StatFile), 2);
         assert_eq!(counts.count(ScanErrorKind::CycleDetected), 1);
@@ -690,6 +702,8 @@ mod tests {
     #[test]
     fn error_counts_merge_adds_everything() {
         init_logger();
+
+        // Arrange
         let mut a = ErrorCounts::new();
         a.record(ScanErrorKind::ReadDirectory, Some(libc::EIO));
         a.suppressed_by_kind.insert(ScanErrorKind::ReadDirectory, 1);
@@ -697,7 +711,11 @@ mod tests {
         b.record(ScanErrorKind::ReadDirectory, Some(libc::EIO));
         b.record(ScanErrorKind::WalkPanic, None);
         b.suppressed_by_kind.insert(ScanErrorKind::ReadDirectory, 2);
+
+        // Act
         a.merge(&b);
+
+        // Assert
         assert_eq!(a.count(ScanErrorKind::ReadDirectory), 2);
         assert_eq!(a.count(ScanErrorKind::WalkPanic), 1);
         assert_eq!(a.errno_count(libc::EIO), 2);
@@ -708,30 +726,48 @@ mod tests {
     #[test]
     fn total_excluding_races_ignores_enoent_and_changes() {
         init_logger();
+
+        // Arrange
         let mut counts = ErrorCounts::new();
+
+        // Act
         counts.record(ScanErrorKind::StatFileNotFound, Some(libc::ENOENT));
         counts.record(ScanErrorKind::ChangedDuringScan, Some(libc::ENOTDIR));
+
+        // Assert
         assert_eq!(counts.total(), 2);
         assert_eq!(counts.total_excluding_races(), 0);
+
+        // Act
         counts.record(ScanErrorKind::StatFile, Some(libc::EACCES));
+
+        // Assert
         assert_eq!(counts.total_excluding_races(), 1);
     }
 
     #[test]
     fn recorder_logs_first_limit_per_kind_then_suppresses() {
         init_logger();
+
+        // Arrange
         let recorder = ErrorRecorder::new();
         let path = std::path::Path::new("a/b");
+
+        // Act
         let mut warned = 0;
         for _ in 0..105 {
             if recorder.record(ScanErrorKind::OpenDirectory, Some(libc::EACCES), path, "x") {
                 warned += 1;
             }
         }
+        let other_kind_warned =
+            recorder.record(ScanErrorKind::ReadDirectory, Some(libc::EIO), path, "y");
+        let counts = recorder.snapshot();
+
+        // Assert
         assert_eq!(warned, 100);
         // 別の種類は別に数える
-        assert!(recorder.record(ScanErrorKind::ReadDirectory, Some(libc::EIO), path, "y"));
-        let counts = recorder.snapshot();
+        assert!(other_kind_warned);
         assert_eq!(counts.count(ScanErrorKind::OpenDirectory), 105);
         assert_eq!(counts.suppressed_count(ScanErrorKind::OpenDirectory), 5);
         assert_eq!(counts.count(ScanErrorKind::ReadDirectory), 1);
@@ -743,24 +779,33 @@ mod tests {
     #[test]
     fn recorder_default_limit_is_100() {
         init_logger();
-        assert_eq!(WARN_LOG_LIMIT_PER_KIND, 100);
+
+        // Arrange
         let recorder = ErrorRecorder::with_warn_limit(2);
         let path = std::path::Path::new("");
-        assert!(recorder.record(ScanErrorKind::WalkPanic, None, path, ""));
-        assert!(recorder.record(ScanErrorKind::WalkPanic, None, path, ""));
-        assert!(!recorder.record(ScanErrorKind::WalkPanic, None, path, ""));
-        assert_eq!(
-            recorder
-                .snapshot()
-                .suppressed_count(ScanErrorKind::WalkPanic),
-            1
-        );
+
+        // Act
+        let first = recorder.record(ScanErrorKind::WalkPanic, None, path, "");
+        let second = recorder.record(ScanErrorKind::WalkPanic, None, path, "");
+        let third = recorder.record(ScanErrorKind::WalkPanic, None, path, "");
+        let counts = recorder.snapshot();
+
+        // Assert
+        assert_eq!(WARN_LOG_LIMIT_PER_KIND, 100);
+        assert!(first);
+        assert!(second);
+        assert!(!third);
+        assert_eq!(counts.suppressed_count(ScanErrorKind::WalkPanic), 1);
     }
 
     #[test]
     fn recorder_is_shareable_between_threads() {
         init_logger();
+
+        // Arrange
         let recorder = ErrorRecorder::new();
+
+        // Act
         std::thread::scope(|scope| {
             for _ in 0..4 {
                 scope.spawn(|| {
@@ -776,6 +821,8 @@ mod tests {
             }
         });
         let counts = recorder.snapshot();
+
+        // Assert
         assert_eq!(counts.count(ScanErrorKind::StatFile), 200);
         assert_eq!(counts.suppressed_count(ScanErrorKind::StatFile), 100);
     }
@@ -783,118 +830,145 @@ mod tests {
     #[test]
     fn escape_keeps_plain_utf8() {
         init_logger();
-        assert_eq!(escape_bytes_for_log(b"a/b.txt"), "a/b.txt");
-        assert_eq!(escape_bytes_for_log("日本語/é".as_bytes()), "日本語/é");
-        assert_eq!(escape_bytes_for_log(b""), "");
+
+        // Act
+        let ascii = escape_bytes_for_log(b"a/b.txt");
+        let multibyte = escape_bytes_for_log("日本語/é".as_bytes());
+        let empty = escape_bytes_for_log(b"");
+
+        // Assert
+        assert_eq!(ascii, "a/b.txt");
+        assert_eq!(multibyte, "日本語/é");
+        assert_eq!(empty, "");
     }
 
     #[test]
     fn escape_non_utf8_control_and_backslash() {
         init_logger();
-        assert_eq!(escape_bytes_for_log(b"a\xffb"), "a\\xffb");
-        assert_eq!(escape_bytes_for_log(b"\xc3"), "\\xc3");
-        assert_eq!(escape_bytes_for_log(b"a\nb\tc"), "a\\u{a}b\\u{9}c");
-        assert_eq!(escape_bytes_for_log(b"a\\b"), "a\\\\b");
-        assert_eq!(escape_bytes_for_log(b"\x1b[0m"), "\\u{1b}[0m");
+
+        // Act
+        let invalid_byte = escape_bytes_for_log(b"a\xffb");
+        let lone_lead_byte = escape_bytes_for_log(b"\xc3");
+        let control_chars = escape_bytes_for_log(b"a\nb\tc");
+        let backslash = escape_bytes_for_log(b"a\\b");
+        let escape_sequence = escape_bytes_for_log(b"\x1b[0m");
+        let valid_chars = escape_bytes_for_log("é\u{ff}".as_bytes());
+        let truncated_char = escape_bytes_for_log(b"\xe3\x81");
+
+        // Assert
+        assert_eq!(invalid_byte, "a\\xffb");
+        assert_eq!(lone_lead_byte, "\\xc3");
+        assert_eq!(control_chars, "a\\u{a}b\\u{9}c");
+        assert_eq!(backslash, "a\\\\b");
+        assert_eq!(escape_sequence, "\\u{1b}[0m");
         // 有効な文字と無効なバイトが混ざる場合
-        assert_eq!(escape_bytes_for_log("é\u{ff}".as_bytes()), "éÿ");
-        assert_eq!(escape_bytes_for_log(b"\xe3\x81"), "\\xe3\\x81");
+        assert_eq!(valid_chars, "éÿ");
+        assert_eq!(truncated_char, "\\xe3\\x81");
     }
 
     #[test]
     fn escape_os_str_and_path() {
         init_logger();
+
+        // Arrange
         let os_str = <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"d/\xfe");
-        assert_eq!(escape_os_str_for_log(os_str), "d/\\xfe");
-        assert_eq!(escape_path_for_log(std::path::Path::new(os_str)), "d/\\xfe");
+
+        // Act
+        let escaped_os_str = escape_os_str_for_log(os_str);
+        let escaped_path = escape_path_for_log(std::path::Path::new(os_str));
+
+        // Assert
+        assert_eq!(escaped_os_str, "d/\\xfe");
+        assert_eq!(escaped_path, "d/\\xfe");
     }
 
     #[test]
     fn worker_ioprio_status_is_classified() {
         init_logger();
+
+        // Arrange
         let want = crate::dir_scan::settings::IoPriority::best_effort(3)
             .unwrap()
             .to_ioprio_value();
-        assert_eq!(
-            worker(
-                0,
-                want,
-                IoprioSetResult::Success,
-                IoprioGetResult::Value(want)
-            )
-            .status(),
-            IoprioStatus::Ok
-        );
-        assert_eq!(
-            worker(
-                0,
-                want,
-                IoprioSetResult::Failure { errno: libc::EPERM },
-                IoprioGetResult::NotAttempted
-            )
-            .status(),
-            IoprioStatus::SetFailed
-        );
-        assert_eq!(
-            worker(
-                0,
-                want,
-                IoprioSetResult::Success,
-                IoprioGetResult::Failure {
-                    errno: libc::EINVAL
-                }
-            )
-            .status(),
-            IoprioStatus::GetFailed
-        );
-        assert_eq!(
-            worker(
-                0,
-                want,
-                IoprioSetResult::Success,
-                IoprioGetResult::NotAttempted
-            )
-            .status(),
-            IoprioStatus::GetFailed
-        );
-        assert_eq!(
-            worker(0, want, IoprioSetResult::Success, IoprioGetResult::Value(0)).status(),
-            IoprioStatus::Mismatch
-        );
-        assert!(worker(0, want, IoprioSetResult::Success, IoprioGetResult::Value(0)).is_failure());
-        assert!(!worker(
+        let matched = worker(
             0,
             want,
             IoprioSetResult::Success,
-            IoprioGetResult::Value(want)
-        )
-        .is_failure());
+            IoprioGetResult::Value(want),
+        );
+        let set_failed = worker(
+            0,
+            want,
+            IoprioSetResult::Failure { errno: libc::EPERM },
+            IoprioGetResult::NotAttempted,
+        );
+        let get_failed = worker(
+            0,
+            want,
+            IoprioSetResult::Success,
+            IoprioGetResult::Failure {
+                errno: libc::EINVAL,
+            },
+        );
+        let get_not_attempted = worker(
+            0,
+            want,
+            IoprioSetResult::Success,
+            IoprioGetResult::NotAttempted,
+        );
+        let mismatch = worker(0, want, IoprioSetResult::Success, IoprioGetResult::Value(0));
+
+        // Act
+        let matched_status = matched.status();
+        let set_failed_status = set_failed.status();
+        let get_failed_status = get_failed.status();
+        let get_not_attempted_status = get_not_attempted.status();
+        let mismatch_status = mismatch.status();
+        let mismatch_is_failure = mismatch.is_failure();
+        let matched_is_failure = matched.is_failure();
+
+        // Assert
+        assert_eq!(matched_status, IoprioStatus::Ok);
+        assert_eq!(set_failed_status, IoprioStatus::SetFailed);
+        assert_eq!(get_failed_status, IoprioStatus::GetFailed);
+        assert_eq!(get_not_attempted_status, IoprioStatus::GetFailed);
+        assert_eq!(mismatch_status, IoprioStatus::Mismatch);
+        assert!(mismatch_is_failure);
+        assert!(!matched_is_failure);
     }
 
     #[test]
     fn ioprio_value_formatting() {
         init_logger();
-        assert_eq!(
-            format_ioprio_value(crate::dir_scan::settings::IoPriority::Idle.to_ioprio_value()),
-            "idle:0"
+
+        // Act
+        let idle =
+            format_ioprio_value(crate::dir_scan::settings::IoPriority::Idle.to_ioprio_value());
+        let best_effort = format_ioprio_value(
+            crate::dir_scan::settings::IoPriority::best_effort(5)
+                .unwrap()
+                .to_ioprio_value(),
         );
-        assert_eq!(
-            format_ioprio_value(
-                crate::dir_scan::settings::IoPriority::best_effort(5)
-                    .unwrap()
-                    .to_ioprio_value()
-            ),
-            "best-effort:5"
-        );
-        assert_eq!(format_ioprio_value(0), "none:0");
-        assert_eq!(format_ioprio_value(1 << 13), "realtime:0");
-        assert_eq!(format_ioprio_value(7 << 13), "unknown(0xe000)");
+        let none = format_ioprio_value(0);
+        let realtime = format_ioprio_value(1 << 13);
+        let unknown = format_ioprio_value(7 << 13);
+
+        // Assert
+        assert_eq!(idle, "idle:0");
+        assert_eq!(best_effort, "best-effort:5");
+        assert_eq!(none, "none:0");
+        assert_eq!(realtime, "realtime:0");
+        assert_eq!(unknown, "unknown(0xe000)");
     }
 
     #[test]
     fn durations_default_is_zero() {
         init_logger();
+
+        // Act
         let d = ScanDurations::default();
+
+        // Assert
         assert_eq!(d.total, std::time::Duration::ZERO);
         assert_eq!(d.drop_old_tree, std::time::Duration::ZERO);
     }
@@ -902,15 +976,27 @@ mod tests {
     #[test]
     fn scan_kind_display() {
         init_logger();
-        assert_eq!(ScanKind::Full.to_string(), "full");
-        assert_eq!(ScanKind::Partial.to_string(), "partial");
+
+        // Act
+        let full = ScanKind::Full.to_string();
+        let partial = ScanKind::Partial.to_string();
+
+        // Assert
+        assert_eq!(full, "full");
+        assert_eq!(partial, "partial");
     }
 
     #[test]
     fn summary_contains_every_report_item() {
         init_logger();
+
+        // Arrange
         let report = sample_report();
+
+        // Act
         let summary = report.summary();
+
+        // Assert
         // execution_id と request_id
         assert!(summary.contains("execution_id=7"), "{summary}");
         assert!(summary.contains("[3, 5]"), "{summary}");
@@ -967,8 +1053,14 @@ mod tests {
     #[test]
     fn summary_lists_only_failed_workers() {
         init_logger();
+
+        // Arrange
         let report = sample_report();
+
+        // Act
         let summary = report.summary();
+
+        // Assert
         assert!(summary.contains("ioprio: workers=3 failed=2"), "{summary}");
         assert!(!summary.contains("worker 0 "), "{summary}");
         assert!(
@@ -984,6 +1076,8 @@ mod tests {
     #[test]
     fn summary_for_full_scan_and_failure() {
         init_logger();
+
+        // Arrange
         let mut report = sample_report();
         report.kind = ScanKind::Full;
         report.requested_path = None;
@@ -991,7 +1085,11 @@ mod tests {
         report.parent_retries.clear();
         report.worker_ioprio.clear();
         report.outcome = ScanOutcome::Failed("root open failed".to_string());
+
+        // Act
         let summary = report.summary();
+
+        // Assert
         assert!(summary.contains("kind=full"), "{summary}");
         assert!(summary.contains("requested_path=full"), "{summary}");
         assert!(summary.contains("effective_path=\"\""), "{summary}");
@@ -1006,16 +1104,28 @@ mod tests {
     #[test]
     fn summary_escapes_non_utf8_paths() {
         init_logger();
+
+        // Arrange
         let mut report = sample_report();
         report.effective_path = std::path::PathBuf::from(
             <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"a/\xff"),
         );
-        assert!(report.summary().contains("effective_path=\"a/\\xff\""));
+
+        // Act
+        let summary = report.summary();
+
+        // Assert
+        assert!(summary.contains("effective_path=\"a/\\xff\""));
     }
 
     #[test]
     fn log_summary_does_not_panic() {
         init_logger();
-        sample_report().log_summary();
+
+        // Arrange
+        let report = sample_report();
+
+        // Act
+        report.log_summary();
     }
 }
