@@ -118,7 +118,7 @@ impl std::fmt::Display for IoPriority {
 /// - 注意: 文字クラスは `literal_separator` の対象外で、`[!x]` や `[/]` は `/` にも当たる
 ///   （`a[!x]b` が `a/b` に当たる。コンパイル結果は `(?-u)^a[^x]b$`）。`?` は `[^/]` になるので
 ///   `/` に当たらない。区切りをまたがせたくない場合は、否定の文字クラスに `/` を含める
-///   （`[!x/]`）か、`?` を使う。
+///   （`[!x/]`）か、`?` を使う（テスト `character_class_can_match_slash_unless_slash_is_listed`）。
 /// - 非 UTF-8 の名前そのものをパターンに書くことはできない（パターンが `String`）。
 #[derive(Clone, Debug)]
 pub struct ExcludePatterns {
@@ -548,6 +548,31 @@ mod tests {
         // `?` は `/` には当たらない（literal_separator）
         assert!(!slash);
         assert!(!slash_in_middle);
+    }
+
+    #[test]
+    fn character_class_can_match_slash_unless_slash_is_listed() {
+        init_logger();
+
+        // Arrange
+        // 文字クラスは globset の `literal_separator` の対象外で、`/` に当たる。
+        // これを仕様として固定する。globset の更新で挙動が変わったときに気づくためのテスト。
+        let negated = patterns(&["a[!x]b"]);
+        let negated_with_slash = patterns(&["a[!x/]b"]);
+        let slash_class = patterns(&["a[/]b"]);
+
+        // Act
+        let negated_matches = negated.is_excluded_bytes(b"a/b");
+        let negated_with_slash_matches = negated_with_slash.is_excluded_bytes(b"a/b");
+        let slash_class_matches = slash_class.is_excluded_bytes(b"a/b");
+
+        // Assert
+        // 否定の文字クラスは `/` に当たる
+        assert!(negated_matches);
+        // `/` を含めた否定の文字クラスは `/` に当たらない
+        assert!(!negated_with_slash_matches);
+        // `/` だけの文字クラスは `/` に当たる
+        assert!(slash_class_matches);
     }
 
     #[test]
