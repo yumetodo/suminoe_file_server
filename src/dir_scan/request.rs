@@ -482,7 +482,8 @@ mod tests {
             worker_ioprio: Vec::new(),
             dir_count: 0,
             file_count: 0,
-            root_total_size: 0,
+            root_total_size: None,
+            scanned_total_size: 0,
             hash_collision_count: 0,
             errors: crate::dir_scan::report::ErrorCounts::new(),
             generations: crate::dir_scan::report::ScanGenerations {

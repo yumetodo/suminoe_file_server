@@ -306,6 +306,8 @@ struct LockedRecord {
     /// ロックの中で読んだ、反映前の `generation`
     generation_before: u64,
     generation_after: u64,
+    /// ロックの中で読んだ、反映後（失敗時は現在）のツリーのルートの合計サイズ
+    root_total_size: Option<u128>,
 }
 
 impl Shared {
@@ -423,7 +425,7 @@ impl Shared {
 
         let mut dir_count: u64 = 0;
         let mut file_count: u64 = 0;
-        let mut root_total_size: u128 = 0;
+        let mut scanned_total_size: u128 = 0;
         let mut hash_collision_count: u64 = 0;
         let mut drop_old_tree = std::time::Duration::ZERO;
         let (outcome, locked) = match outcome {
@@ -431,7 +433,7 @@ impl Shared {
                 dir_count = success.counts.dir_count;
                 file_count = success.counts.file_count;
                 hash_collision_count = success.counts.hash_collision_count;
-                root_total_size = success.node.total_size();
+                scanned_total_size = success.node.total_size();
                 let had_errors = errors.total_excluding_races() > 0;
                 // メモリ確保が必要な処理（複製など）は、ロックを取る前に済ませる
                 let scanned = if effective_path.as_os_str().is_empty() {
@@ -489,7 +491,8 @@ impl Shared {
             worker_ioprio,
             dir_count,
             file_count,
-            root_total_size,
+            root_total_size: locked.root_total_size,
+            scanned_total_size,
             hash_collision_count,
             errors,
             generations: report::ScanGenerations {
@@ -582,6 +585,7 @@ impl Shared {
             applied
         }));
         let generation_after = guard.generation();
+        let root_total_size = guard.root_total_size();
         let apply = apply_started.elapsed();
         drop(guard);
         let locked = LockedRecord {
@@ -590,6 +594,7 @@ impl Shared {
             finished_at,
             generation_before,
             generation_after,
+            root_total_size,
         };
         match caught {
             Err(payload) => abort_process(&format!(
@@ -625,6 +630,7 @@ impl Shared {
             guard.record_failed_scan(reason, finished_at);
         }));
         let generation_after = guard.generation();
+        let root_total_size = guard.root_total_size();
         let apply = apply_started.elapsed();
         drop(guard);
         if let Err(payload) = caught {
@@ -639,6 +645,7 @@ impl Shared {
             finished_at,
             generation_before,
             generation_after,
+            root_total_size,
         }
     }
 
@@ -678,7 +685,8 @@ impl Shared {
             worker_ioprio: Vec::new(),
             dir_count: 0,
             file_count: 0,
-            root_total_size: 0,
+            root_total_size: locked.root_total_size,
+            scanned_total_size: 0,
             hash_collision_count: 0,
             errors: report::ErrorCounts::new(),
             generations: report::ScanGenerations {
@@ -1090,7 +1098,7 @@ mod tests {
         assert_eq!(report.dir_count, 5);
         // f1, f2, f3, f4, file.txt, f5（.hidden は除外）
         assert_eq!(report.file_count, 6);
-        assert_eq!(report.root_total_size, 10 + 20 + 30 + 40 + 5 + 60);
+        assert_eq!(report.root_total_size, Some(10 + 20 + 30 + 40 + 5 + 60));
         assert_eq!(report.hash_collision_count, 0);
         assert_eq!(report.errors.total(), 0);
         assert_eq!(
@@ -1574,7 +1582,7 @@ mod tests {
         );
         assert!(report.effective_path.as_os_str().is_empty());
         assert!(report.parent_retries.is_empty());
-        assert_eq!(report.root_total_size, 165);
+        assert_eq!(report.root_total_size, Some(165));
         assert_eq!(report.generations.after_apply, 1);
         assert_eq!(
             snapshot(&service),
@@ -1721,7 +1729,7 @@ mod tests {
         assert_eq!(report.generations.at_start, 1);
         assert_eq!(report.generations.after_apply, 2);
         // X は除外なしなので .hidden を含む
-        assert_eq!(report.root_total_size, 172);
+        assert_eq!(report.root_total_size, Some(172));
         service.shutdown();
     }
 
@@ -1783,6 +1791,28 @@ mod tests {
             Some(request::ScanTarget::partial(std::path::Path::new("a/b")).unwrap())
         );
         assert_eq!(report_of(&completion_b).kind, report::ScanKind::Partial);
+        service.shutdown();
+    }
+
+    #[test]
+    fn partial_scan_reports_the_root_total_and_the_scanned_subtree_total() {
+        init_logger();
+
+        // Arrange
+        let dir = sample_tree();
+        let service = ScanService::start(dir.path().to_path_buf()).unwrap();
+        run_full(&service, dot_excluded());
+        make_file(dir.path(), "a/b/f6", 100);
+
+        // Act
+        let completion = run_partial(&service, "a/b", dot_excluded());
+
+        // Assert
+        // 格上げされず部分スキャンとして実行される。ルート全体は 165 + 100、走査した部分木は 40 + 5 + 100
+        let report = report_of(&completion);
+        assert_eq!(report.kind, report::ScanKind::Partial);
+        assert_eq!(report.root_total_size, Some(265));
+        assert_eq!(report.scanned_total_size, 145);
         service.shutdown();
     }
 

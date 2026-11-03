@@ -426,8 +426,11 @@ pub struct ScanReport {
     pub worker_ioprio: Vec<WorkerIoprioResult>,
     pub dir_count: u64,
     pub file_count: u64,
-    /// 走査したサブツリーの合計サイズ（フルスキャンならルートの合計サイズ）
-    pub root_total_size: u128,
+    /// 反映後（失敗時は現在）のツリーのルートの合計サイズ。ツリーが未スキャンなら `None`。
+    /// 書き込みロックの中で、反映と同じ区間で読んだ値
+    pub root_total_size: Option<u128>,
+    /// 走査した部分木の合計サイズ（フルスキャンなら `root_total_size` と同じ、失敗時は 0）
+    pub scanned_total_size: u128,
     pub hash_collision_count: u64,
     pub errors: ErrorCounts,
     pub generations: ScanGenerations,
@@ -487,8 +490,13 @@ impl ScanReport {
             self.durations.drop_old_tree.as_secs_f64()
         ));
         lines.push(format!(
-            "  dirs={} files={} root_total_size={} hash_collisions={}",
-            self.dir_count, self.file_count, self.root_total_size, self.hash_collision_count
+            "  dirs={} files={} root_total_size={} scanned_total_size={} hash_collisions={}",
+            self.dir_count,
+            self.file_count,
+            self.root_total_size
+                .map_or_else(|| "none".to_string(), |size| size.to_string()),
+            self.scanned_total_size,
+            self.hash_collision_count
         ));
         lines.push(format!(
             "  generation: at_start={} before_apply={} after_apply={}",
@@ -629,7 +637,8 @@ mod tests {
             ],
             dir_count: 10,
             file_count: 20,
-            root_total_size: 123_456_789_012_345_678_901_234,
+            root_total_size: Some(123_456_789_012_345_678_901_234),
+            scanned_total_size: 42,
             hash_collision_count: 2,
             errors,
             generations: ScanGenerations {
