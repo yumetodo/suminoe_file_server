@@ -6,5 +6,19 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-notify = "6.1.1"
-actix-web = "4"
+notify = "=6.1.1"
+actix-web = "=4.4.1"
+rayon = "=1.12.0"
+globset = "=0.4.21"
+anyhow = "=1.0.104"
+log = "=0.4.35"
+env_logger = "=0.11.11"
+libc = "=0.2.191"
+rustix = { version = "=1.1.6", features = ["fs"] }
+
+[dev-dependencies]
+proptest = "=1.12.0"
+tempfile = "=3.27.0"
+
+[profile.release]
+debug = 1
